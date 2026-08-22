@@ -1,0 +1,18 @@
+[Unit]
+Description=IPsec Agent for EdgeGate
+After=network.target strongswan.service
+Wants=strongswan.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/edgegate/ipsec-agent
+Environment="IPSEC_AGENT_TOKEN=changeme-ipsec-token"
+Environment="IPSEC_AGENT_PORT=8101"
+ExecStart=/opt/edgegate/ipsec-agent/venv/bin/gunicorn -w 2 -b 127.0.0.1:8101 app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,484 @@
+#!/bin/bash
+#
+# vpnctl - EdgeGate Control Script
+#
+# Usage: vpnctl <command> [options]
+#
+
+set -e
+
+INSTALL_DIR="/opt/edgegate"
+COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
+ENV_FILE="${INSTALL_DIR}/config/.env"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+print_usage() {
+    echo "EdgeGate Control"
+    echo
+    echo "Usage: vpnctl <command> [options]"
+    echo
+    echo "Commands:"
+    echo "  start         Start all services"
+    echo "  stop          Stop all services"
+    echo "  restart       Restart all services"
+    echo "  status        Show service status"
+    echo "  logs          View logs (use -f to follow)"
+    echo "  update        Update to latest version"
+    echo "  backup        Create backup"
+    echo "  restore       Restore from backup"
+    echo "  shell         Open shell in container"
+    echo "  reset-admin   Reset admin password"
+    echo "  trusted-hosts Manage a user's Trusted Hosts (source-IP allowlist)"
+    echo "  renew-certs   Renew SSL certificates"
+    echo "  vpn-status    Show VPN connections"
+    echo "  help          Show this help"
+    echo
+    echo "Examples:"
+    echo "  vpnctl start"
+    echo "  vpnctl logs -f backend"
+    echo "  vpnctl shell backend"
+    echo "  vpnctl backup"
+    echo "  vpnctl trusted-hosts list admin"
+    echo "  vpnctl trusted-hosts clear admin      # recover from a self lock-out"
+    echo
+}
+
+check_installed() {
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        echo -e "${RED}Error: EdgeGate is not installed${NC}"
+        echo "Run install.sh first"
+        exit 1
+    fi
+}
+
+cmd_start() {
+    echo -e "${BLUE}Starting services...${NC}"
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" up -d
+    echo -e "${GREEN}Services started${NC}"
+}
+
+cmd_stop() {
+    echo -e "${BLUE}Stopping services...${NC}"
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" down
+    echo -e "${GREEN}Services stopped${NC}"
+}
+
+cmd_restart() {
+    echo -e "${BLUE}Restarting services...${NC}"
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" restart
+    echo -e "${GREEN}Services restarted${NC}"
+}
+
+cmd_status() {
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" ps
+}
+
+cmd_logs() {
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" logs "$@"
+}
+
+cmd_update() {
+    echo -e "${BLUE}Updating EdgeGate...${NC}"
+
+    # Prefer the resilient orchestrator (git pull -> build-before-down ->
+    # health-gated with automatic rollback, OpenVPN certs preserved). This is
+    # the same script the UI/update-agent runs. Falls back to the legacy path.
+    UPDATE_SCRIPT="${INSTALL_DIR}/update-agent/update.sh"
+    if [ -x "$UPDATE_SCRIPT" ]; then
+        echo "Running resilient updater (${UPDATE_SCRIPT})..."
+        UPDATE_REF="${2:-}" bash "$UPDATE_SCRIPT"
+        rc=$?
+        if [ "$rc" = "0" ]; then
+            echo -e "${GREEN}Update complete${NC}"
+        elif [ "$rc" = "2" ]; then
+            echo -e "${YELLOW}Update failed health check — rolled back to previous version${NC}"
+        elif [ "$rc" = "3" ]; then
+            echo -e "${YELLOW}Another update is already running${NC}"
+        else
+            echo -e "${RED}Update failed — see /var/lib/edgegate-update/update.log${NC}"
+        fi
+        return $rc
+    fi
+
+    # ---- Legacy fallback (no update-agent installed) ----
+    cd "$INSTALL_DIR"
+    echo "Creating backup before update..."
+    cmd_backup
+    echo "Pulling latest images..."
+    docker compose --env-file "$ENV_FILE" pull
+    echo "Rebuilding and restarting..."
+    docker compose --env-file "$ENV_FILE" up -d --build
+    echo -e "${GREEN}Update complete${NC}"
+}
+
+# Read a key from the install .env WITHOUT hardcoding names (POSTGRES_USER/DB etc.).
+# This is what makes a backup portable to an install that uses different (edgegate-*)
+# database/role names.
+get_env() {
+    [ -f "$ENV_FILE" ] || return 0
+    grep -E "^[[:space:]]*${1}=" "$ENV_FILE" 2>/dev/null | tail -n1 \
+        | cut -d= -f2- \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+              -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+
+cmd_backup() {
+    BACKUP_DIR="${INSTALL_DIR}/backups"
+    BACKUP_NAME="backup_$(date +%Y%m%d_%H%M%S)"
+    BACKUP_PATH="${BACKUP_DIR}/${BACKUP_NAME}"
+
+    echo -e "${BLUE}Creating backup: ${BACKUP_NAME}${NC}"
+    mkdir -p "$BACKUP_PATH"
+    cd "$INSTALL_DIR"
+
+    local pg_user pg_db
+    pg_user="$(get_env POSTGRES_USER)"; pg_user="${pg_user:-edgegate_admin}"
+    pg_db="$(get_env POSTGRES_DB)";     pg_db="${pg_db:-edgegate}"
+
+    # 1) Database — portable dump. --no-owner --no-acl strips the source role so the dump
+    #    restores cleanly under ANY role/DB name (e.g. a fresh edgegate-* install).
+    echo "Backing up database (${pg_db})..."
+    if ! docker compose --env-file "$ENV_FILE" exec -T postgres \
+            pg_dump --no-owner --no-acl -U "$pg_user" "$pg_db" > "${BACKUP_PATH}/db.sql"; then
+        echo -e "${RED}Database dump failed${NC}"
+        rm -rf "$BACKUP_PATH"
+        exit 1
+    fi
+
+    # 2) OpenVPN PKI — the crown jewels. They live in the openvpn_data VOLUME, so tar them
+    #    from INSIDE the container. The old code copied ${INSTALL_DIR}/data/openvpn/pki, a
+    #    bind path that does not exist -> it silently backed up NOTHING. Preserving the CA +
+    #    client certs is what lets existing .ovpn profiles keep working after a restore.
+    echo "Backing up OpenVPN PKI/certs..."
+    if docker compose --env-file "$ENV_FILE" exec -T openvpn test -f /etc/openvpn/ca.crt 2>/dev/null; then
+        docker compose --env-file "$ENV_FILE" exec -T openvpn sh -c \
+            'cd /etc/openvpn && tar -czf - $(ls -d ca.crt server.crt server.key ta.key dh.pem server.conf ccd ipp.txt pki 2>/dev/null)' \
+            > "${BACKUP_PATH}/openvpn-pki.tar.gz" 2>/dev/null \
+            || echo -e "${YELLOW}WARN: OpenVPN PKI backup may be partial${NC}"
+    else
+        echo -e "${YELLOW}WARN: no OpenVPN CA found — skipping PKI backup${NC}"
+    fi
+
+    # 3) Config + a manifest describing what/where this came from.
+    echo "Backing up configuration..."
+    cp "$ENV_FILE" "${BACKUP_PATH}/env" 2>/dev/null || true
+    cat > "${BACKUP_PATH}/manifest.json" <<EOF
+{
+  "created_at": "$(date -u +%FT%TZ)",
+  "version": "$(cat "${INSTALL_DIR}/VERSION" 2>/dev/null | tr -d '[:space:]')",
+  "postgres_db": "${pg_db}",
+  "postgres_user": "${pg_user}",
+  "install_dir": "${INSTALL_DIR}"
+}
+EOF
+
+    # Compress
+    echo "Compressing..."
+    cd "$BACKUP_DIR"
+    tar -czf "${BACKUP_NAME}.tar.gz" "${BACKUP_NAME}"
+    rm -rf "$BACKUP_PATH"
+
+    echo -e "${GREEN}Backup created: ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz${NC}"
+    echo "Copy it OFF this host before migrating or reinstalling."
+}
+
+cmd_restore() {
+    if [ -z "$1" ]; then
+        echo "Usage: vpnctl restore <backup_file>"
+        echo
+        echo "Available backups:"
+        ls -la "${INSTALL_DIR}/backups/"*.tar.gz 2>/dev/null || echo "  No backups found"
+        exit 1
+    fi
+
+    BACKUP_FILE="$1"
+    if [ ! -f "$BACKUP_FILE" ]; then
+        BACKUP_FILE="${INSTALL_DIR}/backups/$1"
+    fi
+
+    if [ ! -f "$BACKUP_FILE" ]; then
+        echo -e "${RED}Backup file not found: $1${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}WARNING: This will overwrite current data!${NC}"
+    read -p "Are you sure? (yes/no): " confirm
+    if [ "$confirm" != "yes" ]; then
+        echo "Cancelled"
+        exit 0
+    fi
+
+    local pg_user pg_db
+    pg_user="$(get_env POSTGRES_USER)"; pg_user="${pg_user:-edgegate_admin}"
+    pg_db="$(get_env POSTGRES_DB)";     pg_db="${pg_db:-edgegate}"
+
+    TEMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$TEMP_DIR"' EXIT
+    echo -e "${BLUE}Restoring from ${BACKUP_FILE}...${NC}"
+
+    # Extract
+    tar -xzf "$BACKUP_FILE" -C "$TEMP_DIR"
+    SRC="${TEMP_DIR}/$(ls "$TEMP_DIR" | head -n1)"
+
+    # Support both the new layout (db.sql / openvpn-pki.tar.gz / env) and the legacy one
+    # (database.sql / pki/) so older backups still restore.
+    DB_SQL="${SRC}/db.sql"; [ -f "$DB_SQL" ] || DB_SQL="${SRC}/database.sql"
+
+    cd "$INSTALL_DIR"
+
+    # Bring Postgres up and wait until it accepts connections.
+    echo "Starting database..."
+    docker compose --env-file "$ENV_FILE" up -d postgres
+    for _ in $(seq 1 30); do
+        docker compose --env-file "$ENV_FILE" exec -T postgres pg_isready -U "$pg_user" -d "$pg_db" >/dev/null 2>&1 && break
+        sleep 2
+    done
+
+    # Stop the services that hold DB connections so DROP SCHEMA can run cleanly.
+    docker compose --env-file "$ENV_FILE" stop backend nat-agent >/dev/null 2>&1 || true
+
+    # Restore the database: wipe the fresh schema, then load the dump. The dump is
+    # --no-owner --no-acl, so it loads under THIS install's role/DB (name-agnostic).
+    if [ -f "$DB_SQL" ]; then
+        echo "Restoring database (${pg_db})..."
+        docker compose --env-file "$ENV_FILE" exec -T postgres \
+            psql -U "$pg_user" -d "$pg_db" -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;' >/dev/null
+        if ! docker compose --env-file "$ENV_FILE" exec -T postgres \
+                psql -v ON_ERROR_STOP=1 -U "$pg_user" -d "$pg_db" < "$DB_SQL" >/dev/null; then
+            echo -e "${RED}Database restore failed${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}WARN: no database dump in backup — skipping DB restore${NC}"
+    fi
+
+    # Bring the whole stack up (recreates backend/openvpn against the restored DB).
+    echo "Starting services..."
+    docker compose --env-file "$ENV_FILE" up -d
+
+    # Restore OpenVPN PKI into the volume (new layout), else the legacy bind copy.
+    if [ -f "${SRC}/openvpn-pki.tar.gz" ]; then
+        echo "Restoring OpenVPN PKI/certs..."
+        for _ in $(seq 1 15); do
+            docker compose --env-file "$ENV_FILE" exec -T openvpn true 2>/dev/null && break
+            sleep 2
+        done
+        docker compose --env-file "$ENV_FILE" exec -T openvpn tar -xzf - -C /etc/openvpn < "${SRC}/openvpn-pki.tar.gz" \
+            && docker compose --env-file "$ENV_FILE" restart openvpn \
+            || echo -e "${YELLOW}WARN: OpenVPN PKI restore had issues — verify VPN manually${NC}"
+    elif [ -d "${SRC}/pki" ]; then
+        echo "Restoring OpenVPN certificates (legacy layout)..."
+        rm -rf "${INSTALL_DIR}/data/openvpn/pki"
+        mkdir -p "${INSTALL_DIR}/data/openvpn"
+        cp -r "${SRC}/pki" "${INSTALL_DIR}/data/openvpn/"
+    fi
+
+    # Bring the DB schema forward to the running code's version (the dump may be older).
+    echo "Applying database migrations..."
+    for _ in $(seq 1 30); do
+        docker compose --env-file "$ENV_FILE" exec -T backend sh -c 'command -v alembic' >/dev/null 2>&1 && break
+        sleep 2
+    done
+    docker compose --env-file "$ENV_FILE" exec -T backend alembic upgrade head \
+        || echo -e "${YELLOW}WARN: alembic upgrade failed — check backend logs${NC}"
+
+    echo -e "${GREEN}Restore complete${NC}"
+    echo "Verify with: vpnctl status  (then log in and check users/tunnels)."
+}
+
+cmd_shell() {
+    CONTAINER=${1:-backend}
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" exec "$CONTAINER" /bin/sh
+}
+
+cmd_reset_admin() {
+    echo -e "${BLUE}Resetting admin password...${NC}"
+
+    NEW_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
+
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" exec backend \
+        python -c "
+from app.db.session import AsyncSessionLocal
+from app.models.user import User
+from app.core.security import hash_password
+import asyncio
+
+async def reset():
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        result = await db.execute(select(User).where(User.username == 'admin'))
+        admin = result.scalar_one_or_none()
+        if admin:
+            admin.password_hash = hash_password('${NEW_PASSWORD}')
+            await db.commit()
+            print('Password reset successfully')
+        else:
+            print('Admin user not found')
+
+asyncio.run(reset())
+"
+
+    echo
+    echo -e "${GREEN}Admin password has been reset${NC}"
+    echo -e "New password: ${YELLOW}${NEW_PASSWORD}${NC}"
+    echo
+    echo -e "${RED}Please save this password and change it after login!${NC}"
+}
+
+cmd_trusted_hosts() {
+    # Local, root-only recovery for the FortiOS-style Trusted Hosts feature.
+    # An admin who saves an allowlist that excludes their own IP locks themselves
+    # out of the panel; `clear` wipes the allowlist (= no restriction) so they can
+    # log back in. Requires shell access to the host — which is the whole point.
+    ACTION="${1:-}"
+    USERNAME="${2:-}"
+
+    if [ -z "$ACTION" ] || [ -z "$USERNAME" ]; then
+        echo "Usage: vpnctl trusted-hosts <list|clear> <username>"
+        exit 1
+    fi
+
+    case "$ACTION" in
+        list|clear) ;;
+        *)
+            echo -e "${RED}Unknown action: ${ACTION}${NC} (use 'list' or 'clear')"
+            exit 1
+            ;;
+    esac
+
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" exec -T backend \
+        python -c "
+from app.db.session import AsyncSessionLocal
+from app.models.user import User
+from sqlalchemy import select
+import asyncio
+
+async def run():
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.username == '${USERNAME}'))
+        user = result.scalar_one_or_none()
+        if not user:
+            print('User not found: ${USERNAME}')
+            return
+        current = [str(ip) for ip in (user.allowed_source_ips or [])]
+        if '${ACTION}' == 'list':
+            if current:
+                print('Trusted Hosts for ${USERNAME}:')
+                for ip in current:
+                    print('  - ' + ip)
+            else:
+                print('${USERNAME}: no Trusted Hosts set (no IP restriction)')
+        else:
+            user.allowed_source_ips = []
+            await db.commit()
+            print('Cleared Trusted Hosts for ${USERNAME} (was: ' + (', '.join(current) if current else 'empty') + ')')
+            print('The user can now log in from any IP.')
+
+asyncio.run(run())
+"
+}
+
+cmd_vpn_status() {
+    echo -e "${BLUE}VPN Connection Status${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    cd "$INSTALL_DIR"
+    docker compose --env-file "$ENV_FILE" exec openvpn cat /etc/openvpn/logs/status.log 2>/dev/null || \
+        echo "No active connections or status file not available"
+}
+
+cmd_renew_certs() {
+    echo -e "${BLUE}Renewing SSL certificates...${NC}"
+
+    # Check if using Let's Encrypt
+    if [ -f "${INSTALL_DIR}/certs/.letsencrypt" ]; then
+        cd "$INSTALL_DIR"
+        docker compose --env-file "$ENV_FILE" exec nginx certbot renew
+        docker compose --env-file "$ENV_FILE" exec nginx nginx -s reload
+        echo -e "${GREEN}Certificates renewed${NC}"
+    else
+        echo "Not using Let's Encrypt. Generate new self-signed certificate manually."
+    fi
+}
+
+# Main
+case "${1:-help}" in
+    start)
+        check_installed
+        cmd_start
+        ;;
+    stop)
+        check_installed
+        cmd_stop
+        ;;
+    restart)
+        check_installed
+        cmd_restart
+        ;;
+    status)
+        check_installed
+        cmd_status
+        ;;
+    logs)
+        check_installed
+        shift
+        cmd_logs "$@"
+        ;;
+    update)
+        check_installed
+        cmd_update
+        ;;
+    backup)
+        check_installed
+        cmd_backup
+        ;;
+    restore)
+        check_installed
+        shift
+        cmd_restore "$@"
+        ;;
+    shell)
+        check_installed
+        shift
+        cmd_shell "$@"
+        ;;
+    reset-admin)
+        check_installed
+        cmd_reset_admin
+        ;;
+    trusted-hosts)
+        check_installed
+        shift
+        cmd_trusted_hosts "$@"
+        ;;
+    vpn-status)
+        check_installed
+        cmd_vpn_status
+        ;;
+    renew-certs)
+        check_installed
+        cmd_renew_certs
+        ;;
+    help|--help|-h)
+        print_usage
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}"
+        print_usage
+        exit 1
+        ;;
+esac

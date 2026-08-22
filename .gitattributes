@@ -1,0 +1,8 @@
+# Keep shell scripts LF so they run on Linux (and via git-bash on Windows) even
+# when checked out on a machine with core.autocrlf=true.
+*.sh text eol=lf
+
+# Extension-less shell scripts and systemd units also get exec'd/parsed on Linux
+# and must stay LF (a CRLF shebang -> "exec: no such file or directory").
+vpnctl text eol=lf
+*.service text eol=lf

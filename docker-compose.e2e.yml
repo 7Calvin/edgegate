@@ -1,0 +1,24 @@
+# EdgeGate — override do GATE DE RELEASE (E2E efêmero).
+#
+# NÃO use direto com `docker compose up`. Rode via scripts/e2e.ps1 (Windows) ou
+# scripts/e2e.sh (Linux/CI), que sobem só a camada de aplicação com um project
+# name isolado, esperam o backend, rodam o Playwright e derrubam tudo (down -v).
+#
+#   docker compose -p edgegate-e2e -f docker-compose.yml -f docker-compose.e2e.yml \
+#     up -d --build postgres redis backend frontend traefik
+#
+# O project name `edgegate-e2e` prefixa os volumes → banco LIMPO a cada execução.
+# Os nomes `-e2e` deixam claro no `docker ps` que são containers do gate, não do
+# stack de dev. openvpn / nat-agent / ipsec ficam de fora (host-networking + tun
+# não rodam de forma isolada no Docker Desktop e o smoke não precisa deles).
+services:
+  postgres:
+    container_name: edgegate-postgres-e2e
+  redis:
+    container_name: edgegate-redis-e2e
+  backend:
+    container_name: edgegate-backend-e2e
+  frontend:
+    container_name: edgegate-frontend-e2e
+  traefik:
+    container_name: edgegate-traefik-e2e

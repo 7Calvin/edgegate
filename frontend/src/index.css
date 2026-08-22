@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  EdgeGate design tokens.
+  Translated from the design system in new-layout (.dc.html):
+    --bg #06090f  --panel #0d1420  --border #16283a  --text #dbe7f0
+    --muted #5f7387  --cyan #22d3ee (primary)  --lime #a3e635 (ok)
+    --red #ff6b6b  --amber #f5c451  --violet #7c5cff
+  Mapped into shadcn's HSL variables so every existing component adopts it.
+*/
+@layer base {
+  :root {
+    --background: 220 43% 4%;          /* #06090f */
+    --foreground: 206 41% 90%;         /* #dbe7f0 */
+
+    --card: 218 42% 9%;                /* #0d1420 */
+    --card-foreground: 206 41% 90%;
+
+    --popover: 218 46% 7%;             /* #0a1018 */
+    --popover-foreground: 206 41% 90%;
+
+    --primary: 188 84% 53%;            /* #22d3ee cyan */
+    --primary-foreground: 220 45% 6%;
+
+    --secondary: 210 44% 13%;          /* #12202e line */
+    --secondary-foreground: 206 41% 90%;
+
+    --muted: 210 44% 13%;
+    --muted-foreground: 210 17% 45%;   /* #5f7387 */
+
+    --accent: 210 45% 16%;             /* #16283a border/hover */
+    --accent-foreground: 206 41% 92%;
+
+    --destructive: 0 100% 71%;         /* #ff6b6b */
+    --destructive-foreground: 220 45% 6%;
+
+    --success: 82 74% 55%;             /* #a3e635 lime */
+    --success-foreground: 220 45% 6%;
+
+    --warning: 42 88% 64%;             /* #f5c451 amber */
+    --warning-foreground: 220 45% 6%;
+
+    --border: 210 45% 16%;             /* #16283a */
+    --input: 210 45% 16%;
+    --ring: 188 84% 53%;
+
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .font-mono, code, pre, kbd {
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+}
+
+/* Subtle scrollbar to match the dark theme */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(210 45% 20%) transparent;
+  }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb {
+    background: hsl(210 45% 18%);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: hsl(210 45% 24%); background-clip: content-box; }
+}
+
+@keyframes eg-pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+.eg-pulse { animation: eg-pulse 2s ease-in-out infinite; }

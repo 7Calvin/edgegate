@@ -1,0 +1,65 @@
+# Traefik Static Configuration
+# EdgeGate - Reverse Proxy / Ingress Controller
+
+# ==================== API / Dashboard ====================
+api:
+  dashboard: true
+  insecure: true  # Dashboard on port 8080 (internal only)
+
+# ==================== Entry Points ====================
+entryPoints:
+  web:
+    address: ":80"
+    # No global redirect — IP access must work over plain HTTP.
+    # Domain access gets redirected via the https-redirect middleware.
+    # Also required for ACME HTTP-01 challenges to work.
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+
+# ==================== Certificate Resolvers ====================
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      # Email is set via TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_EMAIL env var
+      storage: /acme/acme.json
+      httpChallenge:
+        entryPoint: web
+
+# ==================== Providers ====================
+providers:
+  # Docker provider for internal services (backend, frontend)
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    # network: auto-detected by traefik
+    watch: true
+
+  # File provider for external routes managed via web UI
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+# ==================== TLS Options ====================
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+
+# ==================== Logging ====================
+log:
+  level: INFO
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+  bufferingSize: 100

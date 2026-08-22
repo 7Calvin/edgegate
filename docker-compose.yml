@@ -1,0 +1,299 @@
+# EdgeGate - Docker Compose
+#
+# Development: docker-compose up -d
+# Production:  Use install.sh script which generates optimized compose file
+#
+
+services:
+  # ==================== Database ====================
+  postgres:
+    image: postgres:17-alpine
+    container_name: edgegate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-edgegate}
+      POSTGRES_USER: ${POSTGRES_USER:-edgegate_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - edgegate-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edgegate_admin} -d ${POSTGRES_DB:-edgegate}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== Redis ====================
+  redis:
+    image: redis:7-alpine
+    container_name: edgegate-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - edgegate-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== Backend API ====================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: edgegate-backend
+    restart: unless-stopped
+    group_add:
+      - ${DOCKER_GID:-988}
+    environment:
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-edgegate}
+      - POSTGRES_USER=${POSTGRES_USER:-edgegate_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      - DEBUG=${DEBUG:-true}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - OPENVPN_HOST=${OPENVPN_HOST:-localhost}
+      - OPENVPN_PORT=${OPENVPN_PORT:-1194}
+      - OPENVPN_NETWORK=${OPENVPN_NETWORK:-10.8.0.0}
+      - OPENVPN_NETMASK=${OPENVPN_NETMASK:-255.255.255.0}
+      - INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME:-admin}
+      - INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL:-admin@localhost}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-Admin123!@#456}
+      - FIREWALL_ENGINE=${FIREWALL_ENGINE:-iptables}
+      - NAT_AGENT_URL=http://nat-agent:8100
+      - NAT_AGENT_TOKEN=${NAT_AGENT_TOKEN:-changeme-nat-token}
+      - IPSEC_AGENT_URL=${IPSEC_AGENT_URL:-http://172.17.0.1:8101}
+      - IPSEC_AGENT_TOKEN=${IPSEC_AGENT_TOKEN:-changeme-ipsec-token}
+      - UPDATE_AGENT_URL=${UPDATE_AGENT_URL:-http://update-agent:8102}
+      - UPDATE_AGENT_TOKEN=${UPDATE_AGENT_TOKEN:-changeme-update-token}
+      - TRAEFIK_DYNAMIC_DIR=/etc/traefik/dynamic
+      - TRAEFIK_API_URL=http://traefik:8080
+      - TRAEFIK_ACME_EMAIL=${TRAEFIK_ACME_EMAIL:-admin@localhost}
+      - COMPOSE_PROJECT_DIR=${PWD}
+    extra_hosts:
+      - "nat-agent:host-gateway"
+      - "update-agent:host-gateway"
+    volumes:
+      - openvpn_data:/etc/openvpn
+      - logs:/var/log/edgegate
+      - backend_data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./docker-compose.yml:/app/docker-compose.yml
+      - ./VERSION:/app/VERSION:ro
+      - traefik_dynamic:/etc/traefik/dynamic
+      - traefik_acme:/acme
+      - traefik_certs_manual:/certs/manual
+    labels:
+      - "traefik.enable=true"
+      # API routes
+      - "traefik.http.routers.backend.rule=PathPrefix(`/api`) || PathPrefix(`/docs`) || PathPrefix(`/openapi.json`) || PathPrefix(`/health`)"
+      - "traefik.http.routers.backend.entrypoints=websecure"
+      - "traefik.http.routers.backend.tls=true"
+      # IP-agnostic: self-signed cert, no ACME (panel is reached by IP; ACME won't
+      # issue for bare IPs). Set a certresolver here only if you front this with a domain.
+      - "traefik.http.routers.backend.priority=10"
+      - "traefik.http.services.backend.loadbalancer.server.port=8000"
+      # HTTP entrypoint (for redirect)
+      - "traefik.http.routers.backend-http.rule=PathPrefix(`/api`) || PathPrefix(`/docs`) || PathPrefix(`/openapi.json`) || PathPrefix(`/health`)"
+      - "traefik.http.routers.backend-http.entrypoints=web"
+      - "traefik.http.routers.backend-http.priority=10"
+    ports:
+      - "8000:8000"
+    networks:
+      - edgegate-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ==================== Frontend ====================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: edgegate-frontend
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      # Frontend catch-all route (lowest priority)
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls=true"
+      # IP-agnostic: self-signed cert, no ACME (see backend note above).
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+      # HTTP entrypoint (for redirect)
+      - "traefik.http.routers.frontend-http.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend-http.entrypoints=web"
+      - "traefik.http.routers.frontend-http.priority=1"
+    networks:
+      - edgegate-network
+    depends_on:
+      - backend
+
+  # ==================== OpenVPN Server ====================
+  openvpn:
+    build:
+      context: ./docker/openvpn
+      dockerfile: Dockerfile
+    container_name: edgegate-openvpn
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "${OPENVPN_PORT:-1194}:1194/udp"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - OPENVPN_NETWORK=${OPENVPN_NETWORK:-10.8.0.0}
+      - OPENVPN_NETMASK=${OPENVPN_NETMASK:-255.255.255.0}
+      - OPENVPN_DNS_1=${OPENVPN_DNS_1:-8.8.8.8}
+      - OPENVPN_DNS_2=${OPENVPN_DNS_2:-1.1.1.1}
+    volumes:
+      - openvpn_data:/etc/openvpn
+    networks:
+      - edgegate-network
+    sysctls:
+      - net.ipv4.ip_forward=1
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # ==================== NAT Agent (Port Forwarding) ====================
+  nat-agent:
+    build:
+      context: ./docker/nat-agent
+      dockerfile: Dockerfile
+    container_name: edgegate-nat-agent
+    restart: unless-stopped
+    privileged: true
+    # Host networking is REQUIRED: the agent edits the HOST iptables (NAT gateway,
+    # DNAT/port-forward). On a bridge network its iptables would only affect the
+    # container namespace and NAT would silently break.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    # NOTE: with network_mode host there is no port mapping or compose network;
+    # the agent listens directly on the host at :8100, and POSTGRES_HOST must be
+    # reachable from the host (postgres publishes 127.0.0.1:5432).
+    environment:
+      - POSTGRES_HOST=127.0.0.1
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-edgegate}
+      - POSTGRES_USER=${POSTGRES_USER:-edgegate_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - NAT_AGENT_TOKEN=${NAT_AGENT_TOKEN:-changeme-nat-token}
+      # Gateway NAT: set NAT_GATEWAY_NETWORK to the private subnet that uses this
+      # host as its NAT gateway (e.g. 10.48.0.0/16). Empty = feature disabled.
+      - NAT_GATEWAY_NETWORK=${NAT_GATEWAY_NETWORK:-}
+      - PUBLIC_INTERFACE=${PUBLIC_INTERFACE:-eth0}
+      # IPsec site-to-site: remote subnets exempt from masquerade (real src IP
+      # preserved so the peer can initiate back into the VPC). Empty = off.
+      - NAT_GATEWAY_EXCLUDE=${NAT_GATEWAY_EXCLUDE:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ==================== Traefik Reverse Proxy ====================
+  traefik:
+    image: traefik:v3.6
+    container_name: edgegate-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./docker/traefik/dynamic/internal.yml:/etc/traefik/dynamic/internal.yml:ro
+      - traefik_dynamic:/etc/traefik/dynamic
+      - traefik_acme:/acme
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./certs:/certs:ro
+      - traefik_certs_manual:/certs-manual:ro
+      - logs:/var/log/traefik
+    environment:
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_EMAIL=${TRAEFIK_ACME_EMAIL:-admin@localhost}
+    networks:
+      - edgegate-network
+    depends_on:
+      - backend
+      - frontend
+
+  # ==================== Prometheus (Monitoring) - Optional ====================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: edgegate-prometheus
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - edgegate-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  # ==================== Grafana (Dashboards) - Optional ====================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: edgegate-grafana
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    networks:
+      - edgegate-network
+    depends_on:
+      - prometheus
+
+# ==================== Networks ====================
+networks:
+  edgegate-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ==================== Volumes ====================
+volumes:
+  postgres_data:
+  redis_data:
+  openvpn_data:
+  logs:
+  backend_data:
+  traefik_dynamic:
+  traefik_acme:
+  traefik_certs_manual:
+  prometheus_data:
+  grafana_data:

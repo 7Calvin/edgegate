@@ -1,0 +1,40 @@
+# Traefik Dynamic Configuration - Shared Middlewares
+# These middlewares are available to all routes (internal + external)
+
+http:
+  middlewares:
+    # HTTP to HTTPS redirect (used by Docker label routers)
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # Security headers
+    security-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        customResponseHeaders:
+          X-Powered-By: ""
+          Server: ""
+
+    # Gzip compression
+    compress:
+      compress:
+        excludedContentTypes:
+          - text/event-stream
+
+    # Default rate limit (can be overridden per route)
+    default-rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+
+    # HTTP → HTTPS redirect (applied only to domain-specific routers,
+    # so that IP-based HTTP access keeps working without redirect)
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true

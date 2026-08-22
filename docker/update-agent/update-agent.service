@@ -1,0 +1,23 @@
+[Unit]
+Description=Update Agent for EdgeGate
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/edgegate/update-agent
+Environment="UPDATE_AGENT_TOKEN=changeme-update-token"
+Environment="UPDATE_AGENT_PORT=8102"
+Environment="INSTALL_DIR=/opt/edgegate"
+Environment="REPO_DIR=/opt/edgegate/repo"
+Environment="STATE_DIR=/var/lib/edgegate-update"
+Environment="UPDATE_SCRIPT=/opt/edgegate/update-agent/update.sh"
+# Bind on all interfaces so the backend container can reach it via host-gateway.
+ExecStart=/opt/edgegate/update-agent/venv/bin/gunicorn -w 2 -t 300 -b 0.0.0.0:8102 app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

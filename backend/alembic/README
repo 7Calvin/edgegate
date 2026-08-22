@@ -1,0 +1,8 @@
+Generic single-database configuration with an async driver (postgresql+asyncpg).
+
+Commands:
+  - Generate migration: alembic revision --autogenerate -m "description"
+  - Run migrations: alembic upgrade head
+  - Downgrade: alembic downgrade -1
+  - Show current: alembic current
+  - Show history: alembic history
