@@ -7,12 +7,19 @@ off an update. Progress is streamed by the frontend polling the agent directly
 through Traefik (`/update-agent/status`), because the backend itself restarts
 mid-update and cannot be relied upon to report its own progress.
 """
+import json
 import logging
 import os
+import shutil
 import subprocess
+import tarfile
+import tempfile
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from app.core.config import settings
 from app.dependencies.auth import get_current_active_user, require_admin
@@ -183,3 +190,58 @@ async def regenerate_openvpn_config(admin: User = Depends(require_admin)):
     if not ok:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=data)
     return data
+
+
+@router.get("/backup")
+async def download_backup(admin: User = Depends(require_admin)):
+    """Create a full backup (DB dump + OpenVPN PKI + config marker) and return it as a
+    downloadable .tar.gz. Name-agnostic: the DB is dumped with --no-owner --no-acl and
+    the OpenVPN PKI is tarred straight from the container volume, so it restores onto a
+    fresh install (see POST /system/restore). Runs via the docker socket the backend
+    already has; it does not stop or recreate anything."""
+    pg = os.environ.get("POSTGRES_CONTAINER", "edgegate-postgres")
+    ovpn = os.environ.get("OPENVPN_CONTAINER", "edgegate-openvpn")
+    pg_user, pg_db = settings.POSTGRES_USER, settings.POSTGRES_DB
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    tmp = tempfile.mkdtemp(prefix="egbackup_")
+    bdir = os.path.join(tmp, f"backup_{ts}")
+    os.makedirs(bdir)
+    try:
+        # 1) Database — portable dump.
+        with open(os.path.join(bdir, "db.sql"), "wb") as f:
+            r = subprocess.run(
+                ["docker", "exec", pg, "pg_dump", "--no-owner", "--no-acl", "-U", pg_user, pg_db],
+                stdout=f, stderr=subprocess.PIPE, timeout=300,
+            )
+        if r.returncode != 0:
+            raise HTTPException(500, f"pg_dump failed: {(r.stderr or b'').decode()[:300]}")
+
+        # 2) OpenVPN PKI/certs from the volume (best effort — a fresh VPN may have none).
+        with open(os.path.join(bdir, "openvpn-pki.tar.gz"), "wb") as f:
+            subprocess.run(
+                ["docker", "exec", ovpn, "sh", "-c",
+                 "cd /etc/openvpn && tar -czf - $(ls -d ca.crt server.crt server.key ta.key "
+                 "dh.pem server.conf ccd ipp.txt pki 2>/dev/null)"],
+                stdout=f, stderr=subprocess.DEVNULL, timeout=120,
+            )
+
+        # 3) Manifest.
+        with open(os.path.join(bdir, "manifest.json"), "w") as f:
+            json.dump({"created_at": ts, "version": settings.VERSION,
+                       "postgres_db": pg_db, "postgres_user": pg_user}, f)
+
+        archive = os.path.join(tmp, f"backup_{ts}.tar.gz")
+        with tarfile.open(archive, "w:gz") as tf:
+            tf.add(bdir, arcname=f"backup_{ts}")
+        logger.info("Backup created by admin '%s' (%s)", admin.username, ts)
+        return FileResponse(
+            archive, media_type="application/gzip",
+            filename=f"edgegate-backup_{ts}.tar.gz",
+            background=BackgroundTask(shutil.rmtree, tmp, ignore_errors=True),
+        )
+    except HTTPException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    except Exception as e:  # noqa: BLE001
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(500, f"backup failed: {e}")

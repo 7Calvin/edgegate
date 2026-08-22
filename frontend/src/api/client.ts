@@ -657,6 +657,9 @@ export const systemApi = {
   // Admin: explicitly regenerate OpenVPN server.conf (PKI/certs preserved).
   regenerateOpenvpnConfig: () => api.post('/system/openvpn/regenerate-config'),
 
+  // Admin: download a full backup (DB + OpenVPN PKI + config) as a .tar.gz blob.
+  downloadBackup: () => api.get('/system/backup', { responseType: 'blob' }),
+
   // Resilient progress polling: hits the host update-agent DIRECTLY through
   // Traefik (`/update-agent/status`), bypassing the backend — which restarts
   // mid-update. Traefik injects the agent token, so no auth header is needed

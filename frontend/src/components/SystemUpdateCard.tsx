@@ -53,6 +53,7 @@ export default function SystemUpdateCard() {
   const [checking, setChecking] = useState(false)
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [polling, setPolling] = useState(false)
+  const [backuping, setBackuping] = useState(false)
   // Which confirmation modal is open (replaces the native window.confirm()).
   const [confirm, setConfirm] = useState<null | 'update' | 'regen'>(null)
   // Available version tags + the one picked in the specific-version selector.
@@ -119,6 +120,27 @@ export default function SystemUpdateCard() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [polling])
+
+  const handleBackup = async () => {
+    setBackuping(true)
+    try {
+      const res = await systemApi.downloadBackup()
+      const url = URL.createObjectURL(res.data as Blob)
+      const a = document.createElement('a')
+      a.href = url
+      const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
+      a.download = `edgegate-backup_${ts}.tar.gz`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast({ title: 'Backup gerado', description: 'O download deve iniciar automaticamente. Guarde-o fora do servidor.' })
+    } catch {
+      toast({ variant: 'destructive', title: 'Falha ao gerar backup', description: 'Verifique os logs do backend.' })
+    } finally {
+      setBackuping(false)
+    }
+  }
 
   const handleCheck = async () => {
     setChecking(true)
@@ -281,6 +303,10 @@ export default function SystemUpdateCard() {
           <Button variant="ghost" onClick={() => setConfirm('regen')} disabled={running} className="gap-2">
             <RotateCcw className="h-4 w-4" />
             Regenerar config OpenVPN
+          </Button>
+          <Button variant="ghost" onClick={handleBackup} disabled={backuping} className="gap-2">
+            <Database className="h-4 w-4" />
+            {backuping ? 'Gerando backup…' : 'Baixar backup'}
           </Button>
         </div>
 
