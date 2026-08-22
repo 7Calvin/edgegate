@@ -819,22 +819,31 @@ class TraefikService:
         """
         import asyncio
 
-        container = self.traefik_container
+        compose_dir = os.environ.get("COMPOSE_PROJECT_DIR", "/opt/edgegate")
+        compose_file = os.path.join(compose_dir, "docker-compose.yml")
+        env_file = os.path.join(compose_dir, "config", ".env")
 
-        async def _restart():
+        async def _recreate():
             try:
                 await asyncio.sleep(1)
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "restart", container,
+                # A plain `docker restart` keeps the container's in-memory TLS store and
+                # does NOT reliably reload a freshly-issued cert from acme.json — the
+                # container must be RECREATED. `up -d --force-recreate` does that.
+                cmd = (
+                    f"docker compose --env-file {env_file} -f {compose_file} "
+                    f"--project-directory {compose_dir} up -d --force-recreate traefik"
+                )
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 await proc.wait()
-                logger.info("Traefik restarted to force certificate re-issuance")
+                logger.info("Traefik force-recreated to force certificate re-issuance")
             except Exception as e:  # noqa: BLE001
-                logger.error(f"Traefik restart for re-issuance failed: {e}")
+                logger.error(f"Traefik recreate for re-issuance failed: {e}")
 
-        asyncio.ensure_future(_restart())
+        asyncio.ensure_future(_recreate())
         return True, (
             "Reiniciando o proxy para reemitir o certificado. A conexão pode piscar "
             "por ~30s e o navegador pode exibir um aviso até o novo certificado chegar."

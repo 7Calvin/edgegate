@@ -944,6 +944,16 @@ create_docker_compose() {
         NAT_POSTGRES_PORT="${DB_PORT}"
     fi
 
+    # Host-based ("secure") traefik routers carry an ACME certresolver only when
+    # Let's Encrypt is enabled; otherwise the panel domain uses the self-signed cert.
+    if [ "$USE_LETSENCRYPT" = true ]; then
+        _LE_BE=$'\n      - "traefik.http.routers.backend-secure.tls.certresolver=letsencrypt"'
+        _LE_FE=$'\n      - "traefik.http.routers.frontend-secure.tls.certresolver=letsencrypt"'
+    else
+        _LE_BE=""
+        _LE_FE=""
+    fi
+
     cat > ${INSTALL_DIR}/docker-compose.yml << EOF
 services:
 ${POSTGRES_SERVICE}
@@ -990,10 +1000,14 @@ ${POSTGRES_SERVICE}
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.backend.loadbalancer.server.port=8000"
-      # IP-agnostic routing: no domain / Let's Encrypt routers. The panel is reached
-      # by public IP (which can change between sessions), so we serve a self-signed
-      # cert on any host. ACME refuses certs for bare IPs anyway, and domain routers
-      # with an unset DOMAIN would never match. Only the IP fallback routers remain.
+      # Domain (Host-based) router: real cert on the panel domain. certresolver is
+      # appended (via \${_LE_BE}) only when Let's Encrypt is enabled. The IP-based
+      # fallback routers below keep the panel reachable by public IP (self-signed) so a
+      # not-yet-ready domain can never lock you out. Domain routers win on priority.
+      - "traefik.http.routers.backend-secure.rule=Host(\`\${DOMAIN}\`) && (PathPrefix(\`/api\`) || PathPrefix(\`/docs\`) || PathPrefix(\`/openapi.json\`) || PathPrefix(\`/health\`))"
+      - "traefik.http.routers.backend-secure.entrypoints=websecure"
+      - "traefik.http.routers.backend-secure.tls=true"${_LE_BE}
+      - "traefik.http.routers.backend-secure.priority=20"
       # HTTPS fallback for IP access (self-signed cert)
       - "traefik.http.routers.backend-ip.rule=PathPrefix(\`/api\`) || PathPrefix(\`/docs\`) || PathPrefix(\`/openapi.json\`) || PathPrefix(\`/health\`)"
       - "traefik.http.routers.backend-ip.entrypoints=websecure"
@@ -1032,7 +1046,11 @@ ${POSTGRES_SERVICE}
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.frontend.loadbalancer.server.port=80"
-      # IP-agnostic routing: no domain / Let's Encrypt routers (see backend note above).
+      # Domain (Host-based) router: real cert on the panel domain (see backend note).
+      - "traefik.http.routers.frontend-secure.rule=Host(\`\${DOMAIN}\`)"
+      - "traefik.http.routers.frontend-secure.entrypoints=websecure"
+      - "traefik.http.routers.frontend-secure.tls=true"${_LE_FE}
+      - "traefik.http.routers.frontend-secure.priority=15"
       # HTTPS fallback for IP access (self-signed cert)
       - "traefik.http.routers.frontend-ip.rule=PathPrefix(\`/\`)"
       - "traefik.http.routers.frontend-ip.entrypoints=websecure"
