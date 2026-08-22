@@ -101,10 +101,16 @@ if git rev-parse -q --verify "$REMOTE/$BRANCH" >/dev/null 2>&1; then
 fi
 ok "Preflight OK"
 
-# ---- write VERSION, commit, tag ----
-log "Writing VERSION -> $NEW"
-if [ "$DRY_RUN" != "1" ]; then printf '%s\n' "$NEW" > "$VERSION_FILE"; fi
-run "git add '$VERSION_FILE'"
+# ---- write VERSION (+ mirror into package.json / __init__.py), commit, tag ----
+PKG_JSON="$APP_DIR/frontend/package.json"
+INIT_PY="$APP_DIR/backend/app/__init__.py"
+log "Writing VERSION -> $NEW (+ frontend/package.json, backend/app/__init__.py)"
+if [ "$DRY_RUN" != "1" ]; then
+    printf '%s\n' "$NEW" > "$VERSION_FILE"
+    [ -f "$PKG_JSON" ] && sed -i -E "s/(\"version\"[[:space:]]*:[[:space:]]*\")[0-9]+\.[0-9]+\.[0-9]+(\")/\1${NEW}\2/" "$PKG_JSON"
+    [ -f "$INIT_PY" ]  && sed -i -E "s/(__version__[[:space:]]*=[[:space:]]*\")[0-9]+\.[0-9]+\.[0-9]+(\")/\1${NEW}\2/" "$INIT_PY"
+fi
+run "git add '$VERSION_FILE' '$PKG_JSON' '$INIT_PY'"
 run "git commit -m 'chore: release $TAG'"
 ok "Committed release $TAG"
 run "git tag -a '$TAG' -m '$TAG'"

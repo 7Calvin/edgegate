@@ -90,9 +90,13 @@ if ($DryRun) {
 }
 
 # ---- write VERSION (UTF-8, no BOM, trailing LF), commit, tag ----
-Info "Writing VERSION -> $New"
+Info "Writing VERSION -> $New (+ frontend/package.json, backend/app/__init__.py)"
 [System.IO.File]::WriteAllText($VersionFile, "$New`n", (New-Object System.Text.UTF8Encoding($false)))
-& git add -- $VersionFile
+$PkgJson = Join-Path $AppDir "frontend/package.json"
+$InitPy  = Join-Path $AppDir "backend/app/__init__.py"
+if (Test-Path $PkgJson) { [System.IO.File]::WriteAllText($PkgJson, ((Get-Content -Raw $PkgJson) -replace '("version"\s*:\s*")\d+\.\d+\.\d+(")', "`${1}$New`${2}"), (New-Object System.Text.UTF8Encoding($false))) }
+if (Test-Path $InitPy)  { [System.IO.File]::WriteAllText($InitPy,  ((Get-Content -Raw $InitPy)  -replace '(__version__\s*=\s*")\d+\.\d+\.\d+(")', "`${1}$New`${2}"), (New-Object System.Text.UTF8Encoding($false))) }
+& git add -- $VersionFile $PkgJson $InitPy
 & git commit -m "chore: release $Tag" | Out-Null
 Ok "Committed release $Tag"
 & git tag -a $Tag -m $Tag
