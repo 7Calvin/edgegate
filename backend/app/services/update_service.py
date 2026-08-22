@@ -105,6 +105,11 @@ class UpdateService:
             timeout=30.0,
         )
 
+    async def start_restore(self, path: str) -> Tuple[bool, Any]:
+        """Kick off a restore of a backup already staged on the host (path). Runs
+        detached on the host agent; progress is polled from /status like an update."""
+        return await self._post("/restore", {"path": path}, timeout=30.0)
+
     async def get_status(self) -> Tuple[bool, Any]:
         return await self._get("/status", timeout=10.0)
 

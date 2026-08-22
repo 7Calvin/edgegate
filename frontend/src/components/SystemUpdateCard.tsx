@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { systemApi, type UpdateStatus } from '@/api/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import {
   RefreshCw,
   Download,
+  Upload,
   CheckCircle2,
   AlertTriangle,
   RotateCcw,
@@ -55,7 +57,10 @@ export default function SystemUpdateCard() {
   const [polling, setPolling] = useState(false)
   const [backuping, setBackuping] = useState(false)
   // Which confirmation modal is open (replaces the native window.confirm()).
-  const [confirm, setConfirm] = useState<null | 'update' | 'regen'>(null)
+  const [confirm, setConfirm] = useState<null | 'update' | 'regen' | 'restore'>(null)
+  const [restoreFile, setRestoreFile] = useState<File | null>(null)
+  const [restoreConfirmText, setRestoreConfirmText] = useState('')
+  const restoreInputRef = useRef<HTMLInputElement | null>(null)
   // Available version tags + the one picked in the specific-version selector.
   const [versions, setVersions] = useState<string[]>([])
   const [selectedRef, setSelectedRef] = useState<string>('')
@@ -192,6 +197,25 @@ export default function SystemUpdateCard() {
     }
   }
 
+  const runRestore = async () => {
+    if (!restoreFile) return
+    setConfirm(null)
+    try {
+      await systemApi.restore(restoreFile)
+      setStatus({ state: 'running', pct: 2, message: 'Iniciando restauração…' })
+      setPolling(true)
+    } catch (e: any) {
+      toast({
+        title: 'Não foi possível iniciar a restauração',
+        description: e?.response?.data?.detail || 'Verifique o arquivo e o update-agent.',
+        variant: 'destructive',
+      })
+    } finally {
+      setRestoreFile(null)
+      setRestoreConfirmText('')
+    }
+  }
+
   const updateAvailable = latest?.update_available
   const running = polling || status?.state === 'running'
 
@@ -308,6 +332,21 @@ export default function SystemUpdateCard() {
             <Database className="h-4 w-4" />
             {backuping ? 'Gerando backup…' : 'Baixar backup'}
           </Button>
+          <Button variant="ghost" onClick={() => restoreInputRef.current?.click()} disabled={running} className="gap-2">
+            <Upload className="h-4 w-4" />
+            Restaurar backup
+          </Button>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept=".gz,.tgz,application/gzip"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null
+              e.target.value = ''
+              if (f) { setRestoreFile(f); setRestoreConfirmText(''); setConfirm('restore') }
+            }}
+          />
         </div>
 
         {/* Specific version / rollback picker */}
@@ -428,6 +467,47 @@ export default function SystemUpdateCard() {
           <Button onClick={runRegenOpenvpn} className="gap-2">
             <RotateCcw className="h-4 w-4" />
             Regenerar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Restore backup confirmation (destructive — type to confirm) */}
+    <Dialog open={confirm === 'restore'} onOpenChange={(o) => { if (!o) { setConfirm(null); setRestoreFile(null); setRestoreConfirmText('') } }}>
+      <DialogContent onClose={() => { setConfirm(null); setRestoreFile(null); setRestoreConfirmText('') }}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            Restaurar backup
+          </DialogTitle>
+          <DialogDescription>
+            Vai restaurar <span className="font-mono text-foreground">{restoreFile?.name}</span>. Isto é{' '}
+            <span className="font-medium text-destructive">destrutivo</span>: substitui o banco de dados e a
+            PKI do OpenVPN atuais. O painel e as VPNs ficam fora do ar por alguns minutos enquanto a stack
+            é recriada.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Digite <span className="font-mono font-semibold text-foreground">RESTAURAR</span> para confirmar.
+          </p>
+          <Input
+            value={restoreConfirmText}
+            onChange={(e) => setRestoreConfirmText(e.target.value)}
+            placeholder="RESTAURAR"
+            autoFocus
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { setConfirm(null); setRestoreFile(null); setRestoreConfirmText('') }}>Cancelar</Button>
+          <Button
+            variant="destructive"
+            onClick={runRestore}
+            disabled={restoreConfirmText.trim() !== 'RESTAURAR'}
+            className="gap-2"
+          >
+            <Upload className="h-4 w-4" />
+            Restaurar agora
           </Button>
         </DialogFooter>
       </DialogContent>

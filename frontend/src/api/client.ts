@@ -660,6 +660,14 @@ export const systemApi = {
   // Admin: download a full backup (DB + OpenVPN PKI + config) as a .tar.gz blob.
   downloadBackup: () => api.get('/system/backup', { responseType: 'blob' }),
 
+  // Admin: upload a backup .tar.gz and restore it (DESTRUCTIVE). Progress is polled
+  // from the host agent via agentStatus(), same as an update.
+  restore: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return api.post('/system/restore', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
+
   // Resilient progress polling: hits the host update-agent DIRECTLY through
   // Traefik (`/update-agent/status`), bypassing the backend — which restarts
   // mid-update. Traefik injects the agent token, so no auth header is needed

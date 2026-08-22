@@ -16,7 +16,7 @@ import tarfile
 import tempfile
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
@@ -245,3 +245,48 @@ async def download_backup(admin: User = Depends(require_admin)):
     except Exception as e:  # noqa: BLE001
         shutil.rmtree(tmp, ignore_errors=True)
         raise HTTPException(500, f"backup failed: {e}")
+
+
+@router.post("/restore")
+async def start_restore(
+    file: UploadFile = File(...),
+    admin: User = Depends(require_admin),
+):
+    """Upload a backup .tar.gz and restore it. DESTRUCTIVE: drops the DB schema and
+    recreates the stack. The restore runs on the host update-agent (detached) — poll
+    progress via GET /system/update/status like an update. The uploaded file is staged
+    into the host install dir through the docker socket (the backend can't write the
+    host filesystem directly)."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty file")
+    if len(data) > 500 * 1024 * 1024:
+        raise HTTPException(413, "backup too large (>500MB)")
+    if data[:2] != b"\x1f\x8b":  # gzip magic
+        raise HTTPException(400, "not a .tar.gz backup archive")
+
+    compose_dir = os.environ.get("COMPOSE_PROJECT_DIR", "/opt/edgegate")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    host_path = f"{compose_dir}/backups/ui-restore-{ts}.tar.gz"
+
+    # Stage the uploaded file onto the host via a throwaway container (the backend is
+    # containerised and can't write the host fs directly). redis:7-alpine is part of
+    # the core stack, so no image pull is needed.
+    try:
+        proc = subprocess.run(
+            ["docker", "run", "--rm", "-i", "--entrypoint", "sh",
+             "-v", f"{compose_dir}:/host", "redis:7-alpine",
+             "-c", f"mkdir -p /host/backups && cat > '/host/backups/ui-restore-{ts}.tar.gz'"],
+            input=data, capture_output=True, timeout=180,
+        )
+        if proc.returncode != 0:
+            raise HTTPException(500, f"failed to stage backup: {(proc.stderr or b'').decode()[:200]}")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(500, "staging the backup timed out")
+
+    logger.warning("Restore requested by admin '%s' from uploaded backup (%d bytes) -> %s",
+                   admin.username, len(data), host_path)
+    ok, res = await update_service.start_restore(host_path)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=res)
+    return res

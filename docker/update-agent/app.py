@@ -40,6 +40,9 @@ LOG_FILE = os.path.join(STATE_DIR, "update.log")
 UPDATE_SCRIPT = os.environ.get(
     "UPDATE_SCRIPT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "update.sh")
 )
+RESTORE_SCRIPT = os.environ.get(
+    "RESTORE_SCRIPT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "restore.sh")
+)
 OPENVPN_CONTAINER = os.environ.get("OPENVPN_CONTAINER", "edgegate-openvpn")
 
 os.makedirs(STATE_DIR, exist_ok=True)
@@ -230,6 +233,41 @@ def update():
         return jsonify({"error": f"failed to launch updater: {e}"}), 500
 
     return jsonify({"job_id": job_id, "state": "running", "ref": ref or "latest"}), 202
+
+
+@app.route("/restore", methods=["POST"])
+def restore():
+    """Restore a backup that has already been placed on the host (path in the body).
+    Runs restore.sh detached — it is destructive (drops the DB schema) and recreates
+    the stack, so it must live outside the containers, like update.sh."""
+    if not check_auth():
+        return jsonify({"error": "unauthorized"}), 401
+
+    status = read_status()
+    if status.get("state") == "running":
+        return jsonify({"error": "An operation is already in progress"}), 409
+
+    body = request.get_json(silent=True) or {}
+    path = (body.get("path") or "").strip()
+    if not path or not os.path.isfile(path):
+        return jsonify({"error": "backup file not found on host"}), 400
+
+    job_id = "restore-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    env = dict(os.environ)
+    env.update({"RESTORE_FILE": path, "JOB_ID": job_id})
+
+    try:
+        subprocess.Popen(
+            ["bash", RESTORE_SCRIPT],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": f"failed to launch restore: {e}"}), 500
+
+    return jsonify({"job_id": job_id, "state": "running"}), 202
 
 
 @app.route("/status", methods=["GET"])

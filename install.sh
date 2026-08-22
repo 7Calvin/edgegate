@@ -545,7 +545,8 @@ install_update_agent() {
     cp "${SCRIPT_DIR}/docker/update-agent/app.py" "$UPDATE_AGENT_DIR/"
     cp "${SCRIPT_DIR}/docker/update-agent/requirements.txt" "$UPDATE_AGENT_DIR/"
     cp "${SCRIPT_DIR}/docker/update-agent/update.sh" "$UPDATE_AGENT_DIR/"
-    chmod +x "$UPDATE_AGENT_DIR/update.sh"
+    cp "${SCRIPT_DIR}/docker/update-agent/restore.sh" "$UPDATE_AGENT_DIR/"
+    chmod +x "$UPDATE_AGENT_DIR/update.sh" "$UPDATE_AGENT_DIR/restore.sh"
 
     # Python virtual environment
     log_info "  Creating Python virtual environment..."
@@ -586,7 +587,7 @@ Environment="COMPOSE_FILE=/opt/edgegate/docker-compose.yml"
 # (forward OR rollback), so this keeps the running agent in lock-step with the system
 # version without any logic inside update.sh — a rollback through an older version and
 # back never strands the agent (and its /tags endpoint) on stale code.
-ExecStartPre=/bin/sh -c 'for f in app.py update.sh; do s=/opt/edgegate/docker/update-agent/\$f; [ -f "\$s" ] && cp -f "\$s" $UPDATE_AGENT_DIR/\$f; done; chmod +x $UPDATE_AGENT_DIR/update.sh 2>/dev/null; exit 0'
+ExecStartPre=/bin/sh -c 'for f in app.py update.sh restore.sh; do s=/opt/edgegate/docker/update-agent/\$f; [ -f "\$s" ] && cp -f "\$s" $UPDATE_AGENT_DIR/\$f; done; chmod +x $UPDATE_AGENT_DIR/update.sh $UPDATE_AGENT_DIR/restore.sh 2>/dev/null; exit 0'
 ExecStart=$UPDATE_AGENT_DIR/venv/bin/gunicorn -w 2 -t 300 -b 0.0.0.0:8102 app:app
 Restart=always
 RestartSec=5
@@ -632,6 +633,7 @@ Description=Watch for refreshed update-agent code and reload it
 [Path]
 PathChanged=/opt/edgegate/docker/update-agent/app.py
 PathChanged=/opt/edgegate/docker/update-agent/update.sh
+PathChanged=/opt/edgegate/docker/update-agent/restore.sh
 Unit=update-agent-refresh.service
 
 [Install]
