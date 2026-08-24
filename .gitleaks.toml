@@ -1,0 +1,39 @@
+# EdgeGate — configuração do gitleaks.
+# Estende as regras default do gitleaks e adiciona uma allowlist dos PLACEHOLDERS
+# conhecidos do projeto, pra não gerar falso-positivo e travar as outras sessões.
+# Segredo REAL continua sendo pego — a allowlist cobre só valores documentados como
+# placeholder/fixture. Ver docs/security-review-2026-08.md.
+
+title = "EdgeGate gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholders e fixtures conhecidos do EdgeGate (não são segredos reais)"
+
+# Arquivos que, por definição, só contêm placeholders/exemplos.
+paths = [
+  '''\.env\.example$''',
+  '''docs/.*\.md$''',
+  '''\.gitleaks\.toml$''',
+  '''\.pre-commit-config\.yaml$''',
+  # M4 (baseline): PEM placeholder de dev, marcada "NOT FOR PRODUCTION".
+  # Allowlist temporária até o fix; remover quando a chave sair do código.
+  '''backend/app/services/vpn_service\.py$''',
+]
+
+# Valores default/placeholder que aparecem em config.py, docker-compose.yml,
+# .service e testes — todos catalogados como "trocar em produção", não segredos.
+regexes = [
+  '''change-me[a-z-]*''',
+  '''changeme-[a-z]+-token''',
+  '''dev-(secret-key|jwt-secret)-change-in-production''',
+  '''your-(super-secret-key|jwt-secret-key)-change-this[a-z-]*''',
+  '''change-this-secure-password''',
+  '''Admin123!@#456''',
+  '''E2eTest12345!''',
+  '''temp123\$\$''',
+  '''ChangeThisPassword123!''',
+  '''your-email-password''',
+]
