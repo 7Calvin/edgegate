@@ -974,13 +974,22 @@ async def export_connection_config(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="IPsec connection not found")
     if target == "generic":
         return _export_generic(conn)
-    # Local IDs default to the peer ID already defined on the connection (right_id) —
-    # it's shared for both links — falling back to the raw IP. The UI no longer asks for
-    # these; they come straight from the stored config.
+    # Local IDs: on a FAILOVER connection the two phase1 tunnels MUST present distinct IKE
+    # identities, else each tunnel's INITIAL_CONTACT destroys the other on our responder and
+    # the tunnel flaps (~every DPD interval). failover_peer_ids() derives a stable, distinct
+    # id per path (`<right_id>-01`/`-02`) — the single source of truth shared with
+    # to_swanctl_secret(), which keys the same ids so both paths authenticate. Single-link
+    # connections have no war, so they keep the plain peer id. Explicit query overrides win.
+    fo = conn.failover_peer_ids()
+    if fo:
+        default_pri, default_bak = fo
+    else:
+        default_pri = conn.right_id or conn.right_ip
+        default_bak = conn.right_id or (conn.right_ip_backup or "")
     return _export_fortigate(
         conn, fortios, wan_pri, wan_bak, lan_if, sla_src,
-        (localid_pri or conn.right_id or conn.right_ip),
-        (localid_bak or conn.right_id or (conn.right_ip_backup or "")),
+        (localid_pri or default_pri),
+        (localid_bak or default_bak),
         base, client_lan,
     )
 

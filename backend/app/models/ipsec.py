@@ -238,6 +238,24 @@ class IPsecConnection(Base):
             return f"{primary}, {backup}"
         return primary
 
+    def failover_peer_ids(self):
+        """When this connection has a failover backup, the peer runs TWO tunnels (one per
+        WAN) toward us. They MUST present distinct IKE identities — if both send the same
+        id, each new tunnel's INITIAL_CONTACT destroys the other on our responder and the
+        tunnel flaps every ~DPD interval. Derive a stable, distinct id per path from the
+        base peer id (`right_id`), so it's independent of the WAN IPs (which change).
+
+        Returns (primary_id, backup_id), or None for a single-link connection (no war to
+        avoid there — one id is fine). The FortiGate export sets these as each phase1's
+        `localid`; `to_swanctl_secret()` keys them so the PSK is found for both paths."""
+        backup = (getattr(self, "right_ip_backup", None) or "").strip()
+        if not backup:
+            return None
+        base = (self.right_id or self.right_ip or "").strip()
+        if not base:
+            return None
+        return (f"{base}-01", f"{base}-02")
+
     def to_swanctl(self) -> str:
         """Generate this connection's `<name> { ... }` entry for swanctl.conf's
         `connections {}` block (the service wraps it)."""
@@ -322,6 +340,13 @@ class IPsecConnection(Base):
                         add(f"@{c}")  # same IP, but as a string identity
                     except ValueError:
                         pass
+            # HA/failover: the peer presents a DISTINCT id per path (see failover_peer_ids)
+            # so its two tunnels don't destroy each other via INITIAL_CONTACT on our side.
+            # Key those derived ids too, or the backup path fails with "no shared key found".
+            fo = self.failover_peer_ids()
+            if fo:
+                for rid in fo:
+                    add(rid)
             lines = [f"    ike-{self.name} {{"]
             for i, rid in enumerate(ids, 1):
                 lines.append(f"        id-{i} = {rid}")
