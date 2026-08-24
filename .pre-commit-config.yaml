@@ -1,0 +1,41 @@
+# EdgeGate — pre-commit hooks de segurança (local, opt-in).
+# Setup (uma vez por clone):  pip install pre-commit && pre-commit install
+# Rodar em tudo:              pre-commit run --all-files
+# Atualizar as revs:          pre-commit autoupdate
+#
+# Barra commits que introduzam secrets ou padrões inseguros óbvios. NÃO substitui
+# o agent .claude/agents/security-guardian (revisão semântica do diff) nem o
+# relatório docs/security-review-2026-08.md — é a primeira linha, mecânica.
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  # ---- Secrets ----
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        # usa .gitleaks.toml na raiz (allowlist dos placeholders conhecidos)
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: detect-private-key
+        # M4: vpn_service.py tem uma PEM placeholder de dev catalogada na baseline;
+        # excluída aqui pra não bloquear commits não relacionados até o fix.
+        exclude: ^backend/app/services/vpn_service\.py$
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # ---- SAST Python (injeção / shell=True / hardcoded) ----
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.9
+    hooks:
+      - id: bandit
+        # -ll = só reporta severidade >= média, pra manter sinal alto.
+        args: ["-ll"]
+        # escopo: código que roda comando/gera config (backend + agents de host).
+        files: ^(backend/app/.*\.py|docker/[^/]+/app\.py)$
+        exclude: ^backend/(tests/|app/.*/tests/)
