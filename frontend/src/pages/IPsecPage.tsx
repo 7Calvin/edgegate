@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { useToast } from '@/hooks/use-toast'
+import { getApiErrorMessage } from '@/lib/apiError'
 import { PageHeader } from '@/components/PageHeader'
 import {
   Shield,
@@ -258,11 +259,11 @@ export default function IPsecPage() {
       setIsAddModalOpen(false)
       setFormData(createInitialForm(serverInfo || undefined))
     },
-    onError: (error: Error & { response?: { data?: { detail?: string } } }) => {
+    onError: (error) => {
       toast({
         variant: 'destructive',
         title: 'Falha ao criar conexão',
-        description: error.response?.data?.detail || 'Erro desconhecido',
+        description: getApiErrorMessage(error),
       })
     },
   })
@@ -277,11 +278,11 @@ export default function IPsecPage() {
       setIsEditModalOpen(false)
       setEditingConnection(null)
     },
-    onError: (error: Error & { response?: { data?: { detail?: string } } }) => {
+    onError: (error) => {
       toast({
         variant: 'destructive',
         title: 'Falha ao atualizar conexão',
-        description: error.response?.data?.detail || 'Erro desconhecido',
+        description: getApiErrorMessage(error),
       })
     },
   })
@@ -293,8 +294,8 @@ export default function IPsecPage() {
       queryClient.invalidateQueries({ queryKey: ['ipsec-config-preview'] })
       toast({ title: 'Conexão excluída' })
     },
-    onError: () => {
-      toast({ variant: 'destructive', title: 'Falha ao excluir conexão' })
+    onError: (error) => {
+      toast({ variant: 'destructive', title: 'Falha ao excluir conexão', description: getApiErrorMessage(error) })
     },
   })
 
