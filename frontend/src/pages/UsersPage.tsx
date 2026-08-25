@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { formatDateTime } from '@/lib/tz'
-import { Plus, Search, UserCheck, UserX, Key, X, Eye, EyeOff, Server, User as UserIcon, Trash2, Copy, Check, AlertTriangle, ShieldCheck, ShieldOff, Network, Shield, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Search, UserCheck, UserX, Key, X, Eye, EyeOff, Server, User as UserIcon, Trash2, Copy, Check, AlertTriangle, ShieldCheck, ShieldOff, Smartphone, Network, Shield, ChevronDown, ChevronRight } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { TrustedHostsModal } from '@/components/TrustedHostsModal'
 import { parseHostEntry } from '@/lib/cidr'
@@ -107,11 +107,11 @@ export default function UsersPage() {
     mutationFn: ({ id, username }: { id: string; username: string }) =>
       usersApi.resetMfa(id).then((res) => ({ ...res, username })),
     onSuccess: (response) => {
-      toast({ title: `MFA removido de ${response.username}` })
+      toast({ title: `MFA deletado de ${response.username}` })
       queryClient.invalidateQueries({ queryKey: ['users'] })
     },
     onError: (err: any) => {
-      toast({ variant: 'destructive', title: err.response?.data?.message || 'Falha ao resetar o MFA' })
+      toast({ variant: 'destructive', title: err.response?.data?.message || 'Falha ao deletar o MFA' })
     },
   })
 
@@ -525,10 +525,10 @@ export default function UsersPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              title="Resetar MFA"
+                              title="Deletar MFA"
                               onClick={() => resetMfaMutation.mutate({ id: user.id, username: user.username })}
                             >
-                              <ShieldOff className="h-4 w-4" />
+                              <Smartphone className="h-4 w-4" />
                             </Button>
                           )}
                           <Button
