@@ -293,6 +293,44 @@ pre-commit desta branch já pluga `gitleaks` + `bandit` localmente.
 
 ---
 
+## Validação dinâmica — homolog (2026-08-24)
+
+Teste ativo autorizado contra um appliance de homolog **instalado via `install.sh`**
+(backend `v2.0.1`, `ENVIRONMENT=production`), a partir de uma conta SSH sem
+privilégio de docker. **Lição central: as severidades "Crítico" acima assumem o
+`docker-compose.yml` cru; o `install.sh` faz hardening que muda o quadro na
+prática.** Nada foi deixado no host (artefatos de PoC removidos).
+
+**🔴 Confirmados explorável ao vivo:**
+- **H6 — host root por qualquer usuário local.** Socket em `srw-rw-rw-`
+  (`chmod 666`). Usuário fora do grupo `docker` subiu container root
+  (`docker run -v /:/host:ro`) e **leu `/etc/shadow`** (root-only). Confirma a
+  escalada. *(Este é o achado de maior impacto real no box.)*
+- **H1 — RCE root no container OpenVPN.** `POST
+  /api/v1/vpn/server/connections/<payload>/disconnect` (admin) com `username =
+  x'; id>poc.txt; echo '` executou `id` → `uid=0(root)` dentro do
+  `edgegate-openvpn`. Injeção de shell via path param não-validado, provada.
+- **M2 — Swagger público.** `/docs`, `/openapi.json`, `/redoc` → `HTTP 200` sem
+  auth na internet; `/health` vaza `version`+`environment`.
+
+**✅ Mitigados NESTE deploy (severidade real menor que a de "compose cru"):**
+- **C1/H5:** segredos **aleatórios** (`openssl rand`), `production`, `DEBUG=False` —
+  JWT não-forjável. Risco residual: ausência de fail-closed no boot.
+- **C2:** agents bindam `0.0.0.0` (default ruim da app) **mas o `ufw` está ativo** e
+  só libera `8100/8101/8102` para `172.17.0.0/16` + `172.20.0.0/16`; de fora, as três
+  portas ficam **filtradas** (token do nat-agent também é aleatório). Risco residual:
+  defesa-em-profundidade (quem estiver na rede docker/VPN alcança; depende do ufw).
+
+**Observação:** ambas as contas admin (`calvin`, `admin`) estavam com `mfa_enabled =
+False` apesar de `INITIAL_ADMIN_REQUIRE_MFA=true` — reforça o M2/L do assessment de
+julho (MFA "obrigatório" não aplicado). A senha do admin `admin` foi redefinida para
+teste do H1 (autorizado) — **deve ser rotacionada**.
+
+**Prioridade de fix reordenada por explorabilidade real neste box:** H6 → H1 → M2 →
+(C1/C2 residuais).
+
+---
+
 ## Histórico
 
 | Data | Ação |
