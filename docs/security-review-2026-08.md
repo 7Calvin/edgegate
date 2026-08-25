@@ -248,27 +248,43 @@ histórico git · lockfiles (`package-lock.json`) presentes.
 
 ---
 
-## Backlog priorizado de remediação (fase seguinte)
+## Status de remediação (2026-08-24, branch `security/review-and-guardian`)
 
-Ordem por impacto ÷ esforço. **Nada disto foi aplicado nesta branch** — são tarefas
-para as sessões de desenvolvimento.
+Corrigidos e commitados nesta branch (a maioria deploy-validada no homolog v2.0.1):
 
-1. **C1 + C2 + C3 (fail-closed):** validator no boot que recusa segredos/tokens
-   default em produção; bind dos agents update/nat em loopback/rede privada +
-   firewall; planejar socket-proxy de escopo mínimo p/ o backend.
-2. **H1:** validar `username` na rota + eliminar o `bash -c` (management API/argv).
-3. **H5:** endurecer defaults do compose (`DEBUG=false`, não publicar DB/Redis/8000,
-   admin randômico + troca no 1º login).
-4. **H2 + M8:** rate-limit/lockout no login + blacklist de JWT/rotação de refresh
-   (Redis).
-5. **M1 (+ schemas de update firewall/VPN):** validators Pydantic de charset;
-   `hmac.compare_digest` nos agents (M5).
-6. **H3:** tokens p/ cookie `HttpOnly`.
-7. **M2/M3/M4/M6/M7/M9/L2/L3 + M10:** docs fechados em prod, senha do Grafana,
-   remover PEM de dev, Traefik `insecure:false`, HSTS/CSP, CORS restrito, hashing de
-   API keys, TrustedHost, atualização de deps.
-8. **H4 (supply-chain):** CI de segurança (Dependabot/CodeQL/gitleaks/pip-audit/
-   Trivy) — *não incluído nesta branch por decisão de escopo*.
+| Achado | Fix | Validação dinâmica |
+|---|---|---|
+| **H1** | allowlist de `username` + `nc` via stdin (sem `bash -c`) | ✅ payload → `Invalid username`, sem RCE |
+| **H6** | `docker.sock` 660 (não 666) nos scripts | ✅ user sem grupo docker perde root; backend ok |
+| **C1** | validator fail-closed: recusa boot em prod com secret default | ✅ prod+default bloqueia; homolog passa |
+| **H2** | rate-limit de login com Redis (`rate_limit.py`/`redis_client.py`) | ✅ 401×8 → 429 |
+| **H3** | refresh token → cookie HttpOnly/Secure/SameSite; store sem localStorage | ✅ body `refresh_token:null`, refresh só por cookie |
+| **M8** | jti + blacklist Redis no logout | ✅ token 401 após logout |
+| **M1 / H4** | validators `name`/`psk` ipsec, firewall `name`/`desc`, VPN `push_dns_domains` (+ gaps Update) | ✅ injeção rejeitada |
+| **M4** | cert placeholder gerado em runtime (remove PEM do repo) | ✅ cert válido gerado |
+| **M5** | `hmac.compare_digest` nos 3 agents | syntax |
+| **M6** | Traefik `api.insecure=false` | config |
+| **M7** | HSTS + CSP + Referrer-Policy no nginx do frontend | ✅ headers presentes, painel carrega |
+| **M9 / L3** | CORS restrito + `ALLOWED_HOSTS` configurável | smoke import |
+| **M3** | Grafana sem `admin/admin` (obrigatório) | YAML |
+| **M10** | dedup de deps + bump `python-multipart` (CVE) | — |
+| **M2** | Swagger fechado em prod (sessão paralela) | ✅ |
+
+**Adiado (fora desta rodada — precisa design ou ciclo de rebuild/teste):**
+- **C2 (bind dos agents em loopback):** os agents bindam `0.0.0.0` mas o `install.sh`
+  já restringe via `ufw` às redes docker/VPN (verificado: portas filtradas de fora).
+  Mudar o bind quebraria o path backend↔agent sem redesenho — mantido `hmac` (M5) +
+  ufw; bind endurecido fica para uma fase de design.
+- **C3 (docker.sock fora do backend):** requer socket-proxy de escopo mínimo —
+  mudança arquitetural.
+- **L2 (hashing de API keys/backup codes):** trocar o esquema invalida chaves/códigos
+  já emitidos — precisa migração.
+- **H5 (defaults do compose):** parcial — `DEBUG`/publicação de portas ainda a apertar
+  no `docker-compose.yml` (C1 já cobre o secret default).
+- **Deps datadas (`python-jose`, `aiohttp`):** bump / migração `jose`→`pyjwt` precisa
+  rebuild + teste da imagem.
+- **CI de segurança (Dependabot/CodeQL/gitleaks/pip-audit/Trivy):** fora do escopo
+  escolhido; o pre-commit desta branch já cobre `gitleaks`+`bandit` localmente.
 
 ---
 
