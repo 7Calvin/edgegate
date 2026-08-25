@@ -103,8 +103,8 @@ export const authApi = {
 
   verifyMfa: (code: string) => api.post('/auth/mfa/verify', { code }),
 
-  disableMfa: (password: string, mfaCode: string) =>
-    api.post('/auth/mfa/disable', { password, mfa_code: mfaCode }),
+  disableMfa: (password: string, mfaCode?: string) =>
+    api.post('/auth/mfa/disable', mfaCode ? { password, mfa_code: mfaCode } : { password }),
 
   changePassword: (currentPassword: string, newPassword: string, confirmPassword: string) =>
     api.post('/auth/password/change', {
@@ -149,6 +149,8 @@ export const usersApi = {
   delete: (id: string) => api.delete(`/users/${id}?permanent=true`),
 
   resetPassword: (id: string) => api.post(`/users/${id}/reset-password`),
+
+  resetMfa: (id: string) => api.post(`/users/${id}/mfa/reset`),
 
   createServiceAccount: (data: {
     service_name: string

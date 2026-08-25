@@ -165,6 +165,40 @@ async def get_user(
     return user
 
 
+@router.post("/{user_id}/mfa/reset", response_model=MessageResponse)
+async def reset_user_mfa(
+    user_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset (remove) MFA on a user's account (admin only).
+
+    Clears the enrolled TOTP secret and backup codes so the user can enroll fresh — the
+    admin recovery path for someone who lost their authenticator. If the account is
+    mfa_required, the user is prompted to set MFA up again on their next login."""
+    user_service = UserService(db)
+    target = await user_service.get_by_id(user_id)
+
+    if not target:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    if not target.mfa_enabled and not target.mfa_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User has no MFA to reset"
+        )
+
+    target.mfa_enabled = False
+    target.mfa_secret = None
+    target.mfa_backup_codes = []
+    await db.commit()
+
+    return MessageResponse(message=f"MFA reset for {target.username}")
+
+
 @router.patch("/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: UUID,

@@ -320,19 +320,23 @@ class AuthService:
         logger.info(f"MFA enabled for user: {user.username}")
         return True
 
-    async def disable_mfa(self, user: User, password: str, mfa_code: str) -> Tuple[bool, str]:
+    async def disable_mfa(self, user: User, password: str, mfa_code: Optional[str] = None) -> Tuple[bool, str]:
         """
         Disable MFA for user.
+
+        The password is always required. A TOTP code is optional: when supplied it must be
+        valid, but when omitted the password alone authorises removal — the recovery path
+        for a user who lost their authenticator.
 
         Returns:
             (success, message)
         """
-        # Verify password
+        # Verify password (always required)
         if not verify_password(password, user.password_hash):
             return False, "Invalid password"
 
-        # Verify MFA code
-        if not verify_mfa_token(user.mfa_secret, mfa_code):
+        # If a TOTP code was supplied, it must match. Omitting it is allowed (password-only).
+        if mfa_code and not verify_mfa_token(user.mfa_secret, mfa_code):
             return False, "Invalid MFA code"
 
         # Disable MFA

@@ -69,9 +69,10 @@ class MFAVerifyRequest(BaseModel):
 
 
 class MFADisableRequest(BaseModel):
-    """MFA disable request - requires password confirmation"""
+    """MFA disable request. The password confirms identity; the TOTP code is OPTIONAL so a
+    user who lost their authenticator can still remove MFA with their password alone."""
     password: str
-    mfa_code: str = Field(..., min_length=6, max_length=6)
+    mfa_code: Optional[str] = Field(None, min_length=6, max_length=6)
 
 
 class PasswordChangeRequest(BaseModel):

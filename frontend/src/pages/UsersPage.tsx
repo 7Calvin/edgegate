@@ -103,6 +103,18 @@ export default function UsersPage() {
     },
   })
 
+  const resetMfaMutation = useMutation({
+    mutationFn: ({ id, username }: { id: string; username: string }) =>
+      usersApi.resetMfa(id).then((res) => ({ ...res, username })),
+    onSuccess: (response) => {
+      toast({ title: `MFA removido de ${response.username}` })
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (err: any) => {
+      toast({ variant: 'destructive', title: err.response?.data?.message || 'Falha ao resetar o MFA' })
+    },
+  })
+
   const deleteUserMutation = useMutation({
     mutationFn: (id: string) => usersApi.delete(id),
     onSuccess: () => {
@@ -507,6 +519,16 @@ export default function UsersPage() {
                               onClick={() => resetPasswordMutation.mutate({ id: user.id, username: user.username })}
                             >
                               <Key className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {user.mfa_enabled && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Resetar MFA"
+                              onClick={() => resetMfaMutation.mutate({ id: user.id, username: user.username })}
+                            >
+                              <ShieldOff className="h-4 w-4" />
                             </Button>
                           )}
                           <Button

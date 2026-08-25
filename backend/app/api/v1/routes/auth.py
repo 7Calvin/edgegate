@@ -245,7 +245,9 @@ async def disable_mfa(
     """
     Disable MFA for current user.
 
-    Requires password and current MFA code for security.
+    Requires the account password. The current TOTP code is optional — omitting it lets a
+    user who lost their authenticator still remove MFA with their password alone. Blocked
+    when the admin marked the account mfa_required.
     """
     if not user.mfa_enabled:
         raise HTTPException(

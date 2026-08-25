@@ -345,7 +345,7 @@ export default function SettingsPage() {
                         </div>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="disable-mfa-code">Código MFA</Label>
+                        <Label htmlFor="disable-mfa-code">Código MFA (opcional)</Label>
                         <Input
                           id="disable-mfa-code"
                           type="text"
@@ -355,11 +355,14 @@ export default function SettingsPage() {
                           placeholder="000000"
                           className="w-32 font-mono"
                         />
+                        <p className="text-xs text-muted-foreground">
+                          Perdeu o autenticador? Deixe em branco — a senha basta para remover o MFA.
+                        </p>
                       </div>
                       <Button
                         variant="destructive"
                         onClick={() => disableMfaMutation.mutate()}
-                        disabled={disableMfaMutation.isPending || !currentPassword || disableMfaCode.length !== 6}
+                        disabled={disableMfaMutation.isPending || !currentPassword || (disableMfaCode.length > 0 && disableMfaCode.length !== 6)}
                       >
                         Desativar MFA
                       </Button>
