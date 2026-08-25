@@ -10,6 +10,7 @@ unchanged; only the implementation underneath switched to swanctl.
 """
 import os
 import glob
+import hmac
 import time
 import ipaddress
 import threading
@@ -28,7 +29,12 @@ STRONGSWAN_SERVICE = os.environ.get('STRONGSWAN_SERVICE', 'strongswan')
 
 
 def check_auth():
-    return request.headers.get('Authorization', '') == f'Bearer {AUTH_TOKEN}'
+    # Constant-time comparison to avoid a token timing side-channel.
+    header = request.headers.get('Authorization', '')
+    prefix = 'Bearer '
+    if not header.startswith(prefix):
+        return False
+    return hmac.compare_digest(header[len(prefix):], AUTH_TOKEN)
 
 
 def _strip_plugin_noise(text: str) -> str:

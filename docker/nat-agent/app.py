@@ -3,6 +3,7 @@ NAT Agent - Applies NAT rules from database to host iptables
 Runs with network_mode: host to have direct access to host networking
 """
 import os
+import hmac
 import subprocess
 import logging
 from flask import Flask, jsonify, request
@@ -393,11 +394,9 @@ def apply_nat_rules():
 
 
 def check_auth():
-    """Check API token"""
-    token = request.headers.get('X-Api-Token')
-    if token != API_TOKEN:
-        return False
-    return True
+    """Check API token (constant-time to avoid a timing side-channel)"""
+    token = request.headers.get('X-Api-Token', '')
+    return hmac.compare_digest(token, API_TOKEN)
 
 
 @app.route('/health', methods=['GET'])
