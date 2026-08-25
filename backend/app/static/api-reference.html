@@ -5,26 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EdgeGate API — Referência v2.0.1</title>
 <style>
+/* EdgeGate design tokens (dark-only, matches the panel index.css) */
 :root{
-  --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#69707d; --line:#e6e8ec;
-  --brand:#3b5bdb; --code-bg:#0f1729; --code-ink:#e2e8f5;
-  --get:#1f8b4c; --post:#2f6feb; --put:#b7791f; --patch:#b7791f; --delete:#d1373a;
-  --pill-admin-bg:#fbe7e7; --pill-admin-ink:#b02a2a; --pill-auth-bg:#e7edfb; --pill-auth-ink:#2f4fb0;
-  --pill-open-bg:#e7f5ec; --pill-open-ink:#1f7a44;
-}
-@media (prefers-color-scheme:dark){
-  :root{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#8b949e;--line:#232a33;
-  --brand:#6b8afd;--code-bg:#0b0f18;--code-ink:#dbe4f3;
-  --pill-admin-bg:#3a1d1d;--pill-admin-ink:#f2a3a3;--pill-auth-bg:#1c2740;--pill-auth-ink:#9bb4ff;
-  --pill-open-bg:#16301f;--pill-open-ink:#7fd8a0;}
+  --bg:#06090f; --panel:#0d1420; --ink:#dbe7f0; --muted:#5f7387; --line:#16283a;
+  --brand:#22d3ee; --code-bg:#0a0f18; --code-ink:#dbe7f0; --badge-ink:#06090f;
+  --get:#a3e635; --post:#22d3ee; --put:#f5c451; --patch:#f5c451; --delete:#ff6b6b;
+  --pill-admin-bg:rgba(255,107,107,.14); --pill-admin-ink:#ff6b6b;
+  --pill-auth-bg:rgba(34,211,238,.14); --pill-auth-ink:#22d3ee;
+  --pill-open-bg:rgba(163,230,53,.14); --pill-open-ink:#a3e635;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-code,pre,.np,.op-path{font-family:"SF Mono",ui-monospace,"Cascadia Code",Menlo,Consolas,monospace;}
+  font:15px/1.6 'IBM Plex Sans',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+code,pre,.np,.op-path{font-family:'IBM Plex Mono',ui-monospace,"Cascadia Code",Menlo,Consolas,monospace;}
 .hero{padding:32px 28px 22px;border-bottom:1px solid var(--line);background:var(--panel);}
 .hero h1{margin:0;font-size:26px;letter-spacing:-.02em;}
-.hero .ver{font-size:14px;font-weight:600;color:#fff;background:var(--brand);
+.hero .ver{font-size:14px;font-weight:600;color:var(--badge-ink);background:var(--brand);
   padding:2px 9px;border-radius:999px;vertical-align:middle;margin-left:8px;}
 .hero p{margin:8px 0 0;color:var(--muted);max-width:70ch;}
 .hero .meta{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;}
@@ -59,7 +55,7 @@ code,pre,.np,.op-path{font-family:"SF Mono",ui-monospace,"Cascadia Code",Menlo,C
   padding:16px 18px;margin:16px 0;}
 .op-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .op-path{font-size:14px;font-weight:600;word-break:break-all;}
-.m{font-size:11px;font-weight:800;color:#fff;padding:3px 8px;border-radius:6px;letter-spacing:.03em;flex:none;}
+.m{font-size:11px;font-weight:800;color:var(--badge-ink);padding:3px 8px;border-radius:6px;letter-spacing:.03em;flex:none;}
 .m-get{background:var(--get)}.m-post{background:var(--post)}.m-put{background:var(--put)}
 .m-patch{background:var(--patch)}.m-delete{background:var(--delete)}
 .tag-pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;margin-left:auto;}
