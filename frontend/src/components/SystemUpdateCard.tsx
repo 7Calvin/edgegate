@@ -91,11 +91,16 @@ export default function SystemUpdateCard() {
     pollRef.current = setInterval(async () => {
       const s = await systemApi.agentStatus()
       if (!s) {
-        // Backend/frontend restart window — keep waiting, don't give up.
+        // agentStatus() returns null during the brief backend/frontend restart window —
+        // but ALSO if the /update-agent progress route is broken, in which case it never
+        // recovers. A long streak means the latter, so escalate the message instead of
+        // leaving the user staring at an eternal "aguarde". (~30s at POLL_MS.)
         missed += 1
-        setStatus((prev) =>
-          prev ? { ...prev, message: 'Reiniciando serviços… aguarde' } : prev
-        )
+        const msg =
+          missed < 15
+            ? 'Reiniciando serviços… aguarde'
+            : 'Sem resposta do agente de atualização. A atualização pode ter concluído em background — recarregue a página para conferir a versão.'
+        setStatus((prev) => (prev ? { ...prev, message: msg } : prev))
         return
       }
       missed = 0

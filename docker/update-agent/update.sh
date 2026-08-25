@@ -291,6 +291,65 @@ fix_traefik_bindmount() {
 }
 fix_traefik_bindmount || true
 
+# ==================== Self-heal the update-agent traefik route ====================
+# The /update-agent/status route (frontend polls it for live progress) lives in the
+# traefik_dynamic volume, NOT bind-mounted. If the volume ever loses it (traefik
+# recreation / volume reset), progress polling silently breaks: the frontend gets the
+# SPA HTML instead of JSON and hangs on "Reiniciando serviços…". Re-assert it here when
+# missing so every update is self-healing. Idempotent; never fatal.
+ensure_update_agent_route() {
+    docker exec edgegate-traefik test -f /etc/traefik/dynamic/update-agent.yml 2>/dev/null && return 0
+    write_status 43 "running" "Restoring update-agent progress route..."
+    local ua_ip ua_token f
+    ua_ip="$(ip -4 addr show scope global 2>/dev/null | grep inet | head -1 | awk '{print $2}' | cut -d/ -f1)"
+    ua_ip="${ua_ip:-172.17.0.1}"
+    ua_token="${UPDATE_AGENT_TOKEN:-}"
+    [ -z "$ua_token" ] && [ -f "${INSTALL_DIR}/update-agent.token" ] && ua_token="$(cat "${INSTALL_DIR}/update-agent.token")"
+    if [ -z "$ua_token" ]; then
+        echo "WARN: update-agent token not found; skipping route restore" >> "$LOG_FILE"
+        return 0
+    fi
+    f="$(mktemp)"
+    cat > "$f" <<YAML
+# Auto-restored by update.sh (self-heal) so live update progress keeps working.
+http:
+  routers:
+    update-agent-status:
+      rule: "PathPrefix(\`/update-agent/status\`) && Method(\`GET\`)"
+      entrypoints: [websecure]
+      tls: {}
+      priority: 100
+      service: update-agent
+      middlewares: [update-agent-strip, update-agent-auth]
+    update-agent-status-http:
+      rule: "PathPrefix(\`/update-agent/status\`) && Method(\`GET\`)"
+      entrypoints: [web]
+      priority: 100
+      service: update-agent
+      middlewares: [update-agent-strip, update-agent-auth]
+  services:
+    update-agent:
+      loadBalancer:
+        servers:
+          - url: "http://${ua_ip}:8102"
+  middlewares:
+    update-agent-strip:
+      stripPrefix:
+        prefixes: ["/update-agent"]
+    update-agent-auth:
+      headers:
+        customRequestHeaders:
+          Authorization: "Bearer ${ua_token}"
+YAML
+    if docker cp "$f" edgegate-traefik:/etc/traefik/dynamic/update-agent.yml >> "$LOG_FILE" 2>&1; then
+        echo "Restored update-agent route into traefik (${ua_ip}:8102)" >> "$LOG_FILE"
+    else
+        echo "WARN: failed to restore update-agent route" >> "$LOG_FILE"
+    fi
+    rm -f "$f"
+}
+ensure_update_agent_route || true
+
 # ==================== Build BEFORE touching running containers ====================
 # If a build fails here, nothing has been stopped or recreated yet.
 write_status 45 "running" "Building images (this can take a few minutes)..."
