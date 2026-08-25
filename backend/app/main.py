@@ -49,15 +49,15 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
-# Trusted Host (security)
+# Trusted Host (security) — allowlist configurable via ALLOWED_HOSTS (default ["*"])
 if not settings.DEBUG:
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["*"]  # Configure com seus domínios em produção
+        allowed_hosts=settings.ALLOWED_HOSTS
     )
 
 

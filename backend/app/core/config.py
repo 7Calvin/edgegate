@@ -77,6 +77,19 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in v.split(",")]
         return v
 
+    # ==================== Trusted Hosts ====================
+    # Host-header allowlist for TrustedHostMiddleware (applied in production only).
+    # Default ["*"] preserves current behavior; set ALLOWED_HOSTS (comma-separated)
+    # to your panel domain(s)/IP to reject Host-header spoofing.
+    ALLOWED_HOSTS: List[str] = ["*"]
+
+    @field_validator("ALLOWED_HOSTS", mode="before")
+    @classmethod
+    def parse_allowed_hosts(cls, v):
+        if isinstance(v, str):
+            return [h.strip() for h in v.split(",") if h.strip()]
+        return v
+
     # ==================== Database ====================
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
