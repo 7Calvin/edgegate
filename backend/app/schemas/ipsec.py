@@ -14,12 +14,38 @@ from app.models.ipsec import IPsecStatus, IKEVersion, DPDAction
 # Common cipher patterns
 CIPHER_PATTERN = re.compile(r'^[a-z0-9\-]+$', re.IGNORECASE)
 LIFETIME_PATTERN = re.compile(r'^\d+[smhd]$')
+NAME_PATTERN = re.compile(r'^[A-Za-z0-9._-]+$')
+
+
+def _validate_conn_name(v):
+    """Connection name is interpolated into swanctl config as a section header
+    (`<name> {`), so it must not contain whitespace, braces, quotes or newlines."""
+    if v is None:
+        return v
+    if not NAME_PATTERN.match(v):
+        raise ValueError("Invalid connection name (allowed: letters, digits, '.', '_', '-')")
+    return v
+
+
+def _validate_psk(v):
+    """PSK is written verbatim into ipsec.secrets as `secret = "<psk>"`; reject any
+    character that could break out of the quoted string or inject a directive."""
+    if v is None:
+        return v
+    if any(c in v for c in '"\n\r') or any(ord(c) < 32 for c in v):
+        raise ValueError("PSK must not contain quotes, newlines or control characters")
+    return v
 
 
 class IPsecConnectionBase(BaseModel):
     """Base IPsec connection schema"""
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v):
+        return _validate_conn_name(v)
 
 
 class IPsecConnectionCreate(IPsecConnectionBase):
@@ -121,6 +147,11 @@ class IPsecConnectionCreate(IPsecConnectionBase):
             raise ValueError(f"Invalid lifetime format (use e.g., '8h', '1h', '30m'): {v}")
         return v
 
+    @field_validator("psk")
+    @classmethod
+    def _check_psk(cls, v):
+        return _validate_psk(v)
+
 
 class IPsecConnectionUpdate(BaseModel):
     """Schema for updating IPsec connection"""
@@ -180,6 +211,53 @@ class IPsecConnectionUpdate(BaseModel):
             ipaddress.ip_address(v)
         except ValueError:
             raise ValueError(f"Invalid backup IP address: {v}")
+        return v
+
+    # Update writes the same swanctl config as Create, so it must re-apply the
+    # same validation — otherwise it is an injection bypass (was the case before).
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v):
+        return _validate_conn_name(v)
+
+    @field_validator("psk")
+    @classmethod
+    def _check_psk(cls, v):
+        return _validate_psk(v)
+
+    @field_validator("left_id", "right_id")
+    @classmethod
+    def validate_id(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return v
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            pass
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]*[a-zA-Z0-9]$', v):
+            raise ValueError(f"Invalid ID (must be IP or FQDN): {v}")
+        return v
+
+    @field_validator("ike_cipher", "esp_cipher")
+    @classmethod
+    def validate_cipher(cls, v):
+        if v is None:
+            return v
+        if not CIPHER_PATTERN.match(v):
+            raise ValueError(f"Invalid cipher format: {v}")
+        return v
+
+    @field_validator("ike_lifetime", "key_lifetime")
+    @classmethod
+    def validate_lifetime(cls, v):
+        if v is None:
+            return v
+        if not LIFETIME_PATTERN.match(v):
+            raise ValueError(f"Invalid lifetime format (use e.g., '8h', '1h', '30m'): {v}")
         return v
 
     @field_validator("left_id", "right_id")
