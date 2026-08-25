@@ -1293,9 +1293,15 @@ fix_permissions() {
 
     cd ${INSTALL_DIR}
 
-    # 1. Fix docker.sock permissions on host
-    log_info "  Setting docker.sock permissions..."
-    chmod 666 /var/run/docker.sock
+    # 1. Restrict docker.sock to the docker group (660), NOT world-writable (666).
+    #    666 makes the root-equivalent Docker socket usable by ANY local user =
+    #    host root for everyone. The backend keeps access via `group_add:
+    #    ${DOCKER_GID}` in the generated compose (docker group membership).
+    log_info "  Restricting docker.sock permissions (docker group, 660)..."
+    if getent group docker >/dev/null 2>&1; then
+        chgrp docker /var/run/docker.sock 2>/dev/null || true
+    fi
+    chmod 660 /var/run/docker.sock
 
     # 2. Fix /app/data permissions via volume
     log_info "  Fixing /app/data permissions..."

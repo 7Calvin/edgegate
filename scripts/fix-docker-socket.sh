@@ -31,9 +31,15 @@ echo -e "${GREEN}✓ Docker socket exists on host${NC}"
 ls -la /var/run/docker.sock
 
 # 2. Set correct permissions on host
-echo -e "\n${YELLOW}2. Setting docker.sock permissions...${NC}"
-chmod 666 /var/run/docker.sock
-echo -e "${GREEN}✓ Permissions set to 666${NC}"
+# Restrict to the docker group (660) instead of world-writable (666). 666 makes
+# the root-equivalent Docker socket usable by ANY local user = host root for
+# everyone. The backend keeps access via `group_add: ${DOCKER_GID}` in compose.
+echo -e "\n${YELLOW}2. Restricting docker.sock permissions (docker group, 660)...${NC}"
+if getent group docker >/dev/null 2>&1; then
+    chgrp docker /var/run/docker.sock 2>/dev/null || true
+fi
+chmod 660 /var/run/docker.sock
+echo -e "${GREEN}✓ Permissions set to 660 (root:docker)${NC}"
 ls -la /var/run/docker.sock
 
 # 3. Check if backend container exists

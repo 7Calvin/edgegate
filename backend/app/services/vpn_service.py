@@ -6,6 +6,7 @@ from datetime import datetime
 from uuid import UUID
 import subprocess
 import os
+import re
 import tempfile
 import logging
 import json
@@ -795,24 +796,32 @@ G4AZmjLbG+8UYeKnGr4kMzYrq4rFjLVlzA==
 
         return connections
 
+    # Same charset the app enforces on username creation (schemas/user.py). This
+    # is a hard security boundary: `username` is fed to the OpenVPN management
+    # interface, so anything outside this allowlist is rejected before it can
+    # reach a command.
+    _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
+
     async def disconnect_client(self, username: str) -> Tuple[bool, Optional[str]]:
         """Disconnect a specific VPN client by username"""
+        if not self._USERNAME_RE.match(username or ""):
+            return False, "Invalid username"
         try:
-            # OpenVPN management interface: send kill command via echo to management socket
-            # Management interface is typically on port 7505 or unix socket
-            # We'll use docker exec to send kill command to OpenVPN management interface
-
-            # Try using management interface via telnet/nc
+            # OpenVPN management interface: send "kill <cn>" over the management
+            # socket. The command is passed via stdin (NOT interpolated into a
+            # shell string), so even a validated username can never break out
+            # into a shell command. No `bash -c`, no shell metacharacters.
             result = subprocess.run(
-                ["docker", "exec", "edgegate-openvpn", "bash", "-c",
-                 f"echo 'kill {username}' | nc localhost 7505 2>/dev/null || echo 'Management interface not available'"],
+                ["docker", "exec", "-i", "edgegate-openvpn",
+                 "nc", "-w", "2", "localhost", "7505"],
+                input=f"kill {username}\n",
                 capture_output=True,
                 text=True,
                 timeout=5
             )
 
             # If management interface is not available, try alternative method
-            if "not available" in result.stdout or result.returncode != 0:
+            if result.returncode != 0:
                 logger.warning(f"Management interface not available, trying alternative method to disconnect {username}")
 
                 # Alternative: Send SIGUSR1 to OpenVPN to reload, which will disconnect all clients
