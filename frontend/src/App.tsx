@@ -85,7 +85,7 @@ function App() {
           <Route path="connections" element={<AdminRoute><ConnectionsPage /></AdminRoute>} />
           <Route path="audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
           <Route path="settings" element={<SettingsPage />} />
-          <Route path="api-reference" element={<ApiReferencePage />} />
+          <Route path="api-reference" element={<AdminRoute><ApiReferencePage /></AdminRoute>} />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

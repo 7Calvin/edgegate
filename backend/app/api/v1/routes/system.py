@@ -150,8 +150,8 @@ _API_REFERENCE_PATH = os.path.join(
 
 
 @router.get("/api-reference", response_class=HTMLResponse, include_in_schema=False)
-async def api_reference(user: User = Depends(get_current_active_user)):
-    """Serve the curated API reference page (authenticated users only)."""
+async def api_reference(user: User = Depends(require_admin)):
+    """Serve the curated API reference page (admin only; hidden from the sidebar)."""
     try:
         with open(_API_REFERENCE_PATH, encoding="utf-8") as f:
             return HTMLResponse(content=f.read())

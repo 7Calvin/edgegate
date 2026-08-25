@@ -72,7 +72,6 @@ export const navGroups: NavGroup[] = [
     items: [
       { name: 'Auditoria', href: '/audit', icon: ScrollText, adminOnly: true, keywords: 'audit logs eventos historico login' },
       { name: 'Configurações', href: '/settings', icon: Settings, adminOnly: false, keywords: 'settings conta senha mfa dominio ldap ad active directory autenticacao' },
-      { name: 'Referência da API', href: '/api-reference', icon: BookOpen, adminOnly: false, keywords: 'api docs swagger openapi referencia endpoints documentacao monitoramento' },
     ],
   },
 ]
@@ -81,6 +80,7 @@ export const navGroups: NavGroup[] = [
 const hiddenItems: NavItem[] = [
   { name: 'Autenticação AD (LDAP)', href: '/settings?tab=auth', icon: Network, adminOnly: true, hidden: true, keywords: 'ldap active directory ad autenticacao sincronizacao grupo vpn ntlm' },
   { name: 'Atualizações do sistema', href: '/settings?tab=sistema', icon: Server, adminOnly: true, hidden: true, keywords: 'update atualizacao versao release sistema deploy' },
+  { name: 'Referência da API', href: '/api-reference', icon: BookOpen, adminOnly: true, hidden: true, keywords: 'api docs swagger openapi referencia endpoints documentacao monitoramento' },
 ]
 
 // Flat list consumed by the command palette (unchanged API).
