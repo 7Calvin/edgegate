@@ -28,12 +28,14 @@ def _validate_conn_name(v):
 
 
 def _validate_psk(v):
-    """PSK is written verbatim into ipsec.secrets as `secret = "<psk>"`; reject any
-    character that could break out of the quoted string or inject a directive."""
+    """PSK is written into a double-quoted strongswan secret; the config writer
+    escapes `"` and `\\` (see models.ipsec._escape_secret), so those are allowed
+    here — any generated PSK works. Only newlines/control chars are rejected: they
+    can't live on a single-line directive and could inject config."""
     if v is None:
         return v
-    if any(c in v for c in '"\n\r') or any(ord(c) < 32 for c in v):
-        raise ValueError("PSK must not contain quotes, newlines or control characters")
+    if any(ord(c) < 32 for c in v):
+        raise ValueError("PSK must not contain newlines or control characters")
     return v
 
 
