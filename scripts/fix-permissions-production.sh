@@ -45,8 +45,14 @@ else
     echo -e "${RED}✗ Docker socket NOT accessible${NC}"
     echo "Fixing docker.sock permissions..."
 
-    # Make sure docker.sock has correct permissions on host
-    chmod 666 /var/run/docker.sock
+    # Restrict docker.sock to the docker group (660), NOT world-writable (666).
+    # 666 makes the root-equivalent Docker socket usable by ANY local user =
+    # host root for everyone. The backend keeps access via `group_add:
+    # ${DOCKER_GID}` in compose (docker group membership).
+    if getent group docker >/dev/null 2>&1; then
+        chgrp docker /var/run/docker.sock 2>/dev/null || true
+    fi
+    chmod 660 /var/run/docker.sock
 
     # Recreate backend container with correct mount
     echo -e "${YELLOW}Recreating backend container...${NC}"
