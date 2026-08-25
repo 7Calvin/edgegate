@@ -306,27 +306,13 @@ export default function IPsecPage() {
       queryClient.invalidateQueries({ queryKey: ['ipsec-status'] })
       toast({ title: 'Túnel iniciado' })
     },
-    onError: (error: Error & { response?: { data?: { detail?: string | { error?: string; suggestion?: string; error_type?: string } } } }) => {
-      const detail = error.response?.data?.detail
-      let errorMsg = 'Erro desconhecido'
-      let suggestion = ''
-
-      if (typeof detail === 'string') {
-        errorMsg = detail
-      } else if (detail && typeof detail === 'object') {
-        errorMsg = detail.error || 'Erro desconhecido'
-        suggestion = detail.suggestion || ''
-      }
-
+    onError: (error) => {
+      // getApiErrorMessage already folds the backend's {error, suggestion} detail
+      // into one friendly string.
       toast({
         variant: 'destructive',
         title: 'Falha ao iniciar túnel',
-        description: (
-          <div className="space-y-1">
-            <p>{errorMsg}</p>
-            {suggestion && <p className="text-xs opacity-80">{suggestion}</p>}
-          </div>
-        ),
+        description: getApiErrorMessage(error),
       })
     },
   })

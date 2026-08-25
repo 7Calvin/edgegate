@@ -12,6 +12,7 @@ import { formatDateTime } from '@/lib/tz'
 import { Shield, ShieldOff, Trash2, Zap, Users, Network, GripVertical, Plus, ArrowRight, Server, Pencil, RefreshCw, Globe, Check, X } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import type { FirewallRule } from '@/types'
+import { getApiErrorMessage } from '@/lib/apiError'
 
 interface QuickRuleStatus {
   exists: boolean
@@ -358,7 +359,7 @@ export default function FirewallPage() {
       toast({
         variant: 'destructive',
         title: 'Falha ao criar regra',
-        description: error.response?.data?.detail || 'Erro desconhecido',
+        description: getApiErrorMessage(error),
       })
     },
   })
@@ -388,7 +389,7 @@ export default function FirewallPage() {
       toast({
         variant: 'destructive',
         title: 'Falha ao criar regra',
-        description: error.response?.data?.detail || 'Erro desconhecido',
+        description: getApiErrorMessage(error),
       })
     },
   })
@@ -436,7 +437,7 @@ export default function FirewallPage() {
       toast({
         variant: 'destructive',
         title: 'Falha ao atualizar regra',
-        description: error.response?.data?.detail || 'Erro desconhecido',
+        description: getApiErrorMessage(error),
       })
     },
   })
