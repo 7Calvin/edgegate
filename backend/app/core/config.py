@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     BACKEND_HOST: str = "0.0.0.0"
     BACKEND_PORT: int = 8000
 
+    # Interactive API docs (Swagger /docs, ReDoc /redoc, /openapi.json). They expose the
+    # full API surface and the exact running version WITHOUT authentication, so they are
+    # OFF by default as a production hardening. Enable in dev with ENABLE_API_DOCS=true;
+    # DEBUG also forces them on. When off, those paths return 404.
+    ENABLE_API_DOCS: bool = False
+
     # ==================== Trusted Proxies / Client IP ====================
     # Number of reverse-proxy hops in front of the backend that we trust to
     # append X-Forwarded-For. On this stack that is Traefik alone (1). The real

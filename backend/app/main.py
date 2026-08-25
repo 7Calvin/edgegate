@@ -24,14 +24,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Interactive API docs (Swagger/ReDoc/openapi.json) expose the full API surface and the
+# exact version WITHOUT auth. Keep them OFF in production (ENABLE_API_DOCS=false, the
+# default); DEBUG forces them on for local development. When disabled, FastAPI serves 404
+# for /docs, /redoc and /openapi.json — hand devs the curated, shareable API reference
+# instead (generated from the openapi.json of a dev/staging instance).
+_docs_on = settings.ENABLE_API_DOCS or settings.DEBUG
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Sistema completo de gerenciamento OpenVPN com interface web",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if _docs_on else None,
+    redoc_url="/redoc" if _docs_on else None,
+    openapi_url="/openapi.json" if _docs_on else None,
 )
 
 
