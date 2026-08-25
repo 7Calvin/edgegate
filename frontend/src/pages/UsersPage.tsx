@@ -38,6 +38,8 @@ export default function UsersPage() {
 
   // Delete confirmation modal state
   const [userToDelete, setUserToDelete] = useState<User | null>(null)
+  // Confirm modal for the lighter row actions (reset password / delete MFA)
+  const [confirmAction, setConfirmAction] = useState<{ type: 'password' | 'mfa'; user: User } | null>(null)
   const [deleteConfirmUsername, setDeleteConfirmUsername] = useState('')
 
   // Password reset modal state
@@ -516,7 +518,7 @@ export default function UsersPage() {
                               variant="ghost"
                               size="sm"
                               title="Redefinir senha"
-                              onClick={() => resetPasswordMutation.mutate({ id: user.id, username: user.username })}
+                              onClick={() => setConfirmAction({ type: 'password', user })}
                             >
                               <Key className="h-4 w-4" />
                             </Button>
@@ -526,7 +528,7 @@ export default function UsersPage() {
                               variant="ghost"
                               size="sm"
                               title="Deletar MFA"
-                              onClick={() => resetMfaMutation.mutate({ id: user.id, username: user.username })}
+                              onClick={() => setConfirmAction({ type: 'mfa', user })}
                             >
                               <Smartphone className="h-4 w-4" />
                             </Button>
@@ -759,6 +761,45 @@ export default function UsersPage() {
       )}
 
       {/* Delete Confirmation Modal */}
+      {confirmAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background rounded-lg shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-6 w-6 text-warning" />
+              <h2 className="text-xl font-bold">
+                {confirmAction.type === 'password' ? 'Redefinir senha' : 'Deletar MFA'}
+              </h2>
+            </div>
+            <p className="text-muted-foreground">
+              {confirmAction.type === 'password' ? (
+                <>Gerar uma nova senha para <span className="font-mono font-bold text-foreground">{confirmAction.user.username}</span>? A senha atual deixará de funcionar.</>
+              ) : (
+                <>Deletar o MFA de <span className="font-mono font-bold text-foreground">{confirmAction.user.username}</span>? O usuário precisará cadastrar o MFA novamente no próximo acesso.</>
+              )}
+            </p>
+            <div className="flex gap-2 justify-end pt-4">
+              <Button variant="outline" onClick={() => setConfirmAction(null)}>
+                Cancelar
+              </Button>
+              <Button
+                variant={confirmAction.type === 'mfa' ? 'destructive' : 'default'}
+                onClick={() => {
+                  const { type, user } = confirmAction
+                  if (type === 'password') {
+                    resetPasswordMutation.mutate({ id: user.id, username: user.username })
+                  } else {
+                    resetMfaMutation.mutate({ id: user.id, username: user.username })
+                  }
+                  setConfirmAction(null)
+                }}
+              >
+                {confirmAction.type === 'password' ? 'Redefinir senha' : 'Deletar MFA'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {userToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-background rounded-lg shadow-xl w-full max-w-md p-6 space-y-4">

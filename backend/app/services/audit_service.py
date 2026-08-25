@@ -31,6 +31,7 @@ _RULES = [
     ("PATCH", rf"^{_P}/users/[^/]+/?$", "users", "Usuário alterado"),
     ("DELETE", rf"^{_P}/users/[^/]+/?$", "users", "Usuário removido"),
     ("POST", rf"^{_P}/users/[^/]+/reset-password/?$", "users", "Senha de usuário redefinida"),
+    ("POST", rf"^{_P}/users/[^/]+/mfa/reset/?$", "users", "MFA de usuário removido (admin)"),
     ("PUT", rf"^{_P}/vpn/server/config/?$", "config", "Configuração do servidor VPN alterada"),
     ("POST", rf"^{_P}/vpn/certificate/regenerate/?$", "config", "Certificado do OpenVPN regenerado"),
     ("POST", rf"^{_P}/ipsec/connections/?$", "ipsec", "Conexão IPsec criada"),
