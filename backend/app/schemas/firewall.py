@@ -11,6 +11,17 @@ import re
 from app.models.firewall import FirewallAction, ProtocolType, NATType
 
 
+def _reject_control_chars(v):
+    """Reject newlines/control chars: name/description are written into the
+    generated nftables config as comments, so a newline would break out of the
+    comment line and inject a rule (H4)."""
+    if v is None:
+        return v
+    if any(ord(c) < 32 for c in v):
+        raise ValueError("must not contain newlines or control characters")
+    return v
+
+
 class FirewallRuleBase(BaseModel):
     """Base firewall rule schema"""
     name: str = Field(..., min_length=1, max_length=100)
@@ -18,6 +29,11 @@ class FirewallRuleBase(BaseModel):
     action: FirewallAction
     protocol: ProtocolType = ProtocolType.ALL
     priority: int = Field(default=100, ge=1, le=10000)
+
+    @field_validator("name", "description")
+    @classmethod
+    def _no_control_chars(cls, v):
+        return _reject_control_chars(v)
 
 
 class FirewallRuleCreate(FirewallRuleBase):
@@ -76,6 +92,42 @@ class FirewallRuleUpdate(BaseModel):
     destination_port_range: Optional[str] = None
     rate_limit_connections_per_second: Optional[int] = Field(None, ge=1, le=10000)
     is_active: Optional[bool] = None
+
+    # Update writes the same nftables config as Create, so re-apply the same
+    # validation instead of trusting the client (H4).
+    @field_validator("name", "description")
+    @classmethod
+    def _no_control_chars(cls, v):
+        return _reject_control_chars(v)
+
+    @field_validator("source_network", "destination_network")
+    @classmethod
+    def validate_network(cls, v):
+        if v is not None:
+            try:
+                ipaddress.ip_network(v, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid network: {v}")
+        return v
+
+    @field_validator("source_port_range", "destination_port_range")
+    @classmethod
+    def validate_port_range(cls, v):
+        if v is None:
+            return v
+        pattern = r'^(\d{1,5}(-\d{1,5})?)(,\d{1,5}(-\d{1,5})?)*$'
+        if not re.match(pattern, v):
+            raise ValueError(f"Invalid port range format: {v}")
+        for part in v.split(','):
+            if '-' in part:
+                start, end = map(int, part.split('-'))
+                if start > end or start < 1 or end > 65535:
+                    raise ValueError(f"Invalid port range: {part}")
+            else:
+                port = int(part)
+                if port < 1 or port > 65535:
+                    raise ValueError(f"Invalid port: {port}")
+        return v
 
 
 class FirewallRuleResponse(BaseModel):
