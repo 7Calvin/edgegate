@@ -47,7 +47,7 @@ export default function LoginPage() {
     setIsLoading(true)
     try {
       const response = await authApi.login(data.username, data.password, data.mfaCode)
-      const { access_token, refresh_token, user_id, username, is_admin, mfa_enabled, mfa_required, mfa_pending } = response.data
+      const { access_token, user_id, username, is_admin, mfa_enabled, mfa_required, mfa_pending } = response.data
 
       // Build user object from flat response fields
       // The full user object will be fetched by checkAuth() if needed
@@ -74,7 +74,7 @@ export default function LoginPage() {
           description: 'Please enter your MFA code',
         })
       } else {
-        setAuth(user, access_token, refresh_token)
+        setAuth(user, access_token)
         toast({
           title: 'Welcome!',
           description: `Logged in as ${username}`,

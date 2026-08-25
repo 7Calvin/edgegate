@@ -5,6 +5,8 @@ const API_BASE_URL = '/api/v1'
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
+  // Send the HttpOnly refresh-token cookie on auth requests (H3).
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -39,45 +41,44 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Never try to refresh the refresh/logout calls themselves (avoids a loop).
+    const isAuthEndpoint =
+      originalRequest.url?.includes('/auth/refresh') ||
+      originalRequest.url?.includes('/auth/logout')
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       originalRequest._retry = true
 
-      const { refreshToken, logout } = useAuthStore.getState()
+      const { logout } = useAuthStore.getState()
 
-      if (refreshToken) {
-        try {
-          // If a refresh is already in progress, wait for it
-          if (!refreshPromise) {
-            refreshPromise = axios
-              .post(`${API_BASE_URL}/auth/refresh`, {
-                refresh_token: refreshToken,
+      try {
+        // Refresh using the HttpOnly cookie — no token lives in JS (H3).
+        // withCredentials sends the cookie; a shared promise coalesces
+        // concurrent refreshes into one.
+        if (!refreshPromise) {
+          refreshPromise = axios
+            .post(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true })
+            .then((response) => {
+              // /auth/refresh returns the access token only (no user, no refresh
+              // in the body). Update just the access token to avoid clobbering
+              // the loaded user (the idle-refresh admin-downgrade bug).
+              const { access_token } = response.data
+              useAuthStore.setState({
+                accessToken: access_token,
+                isAuthenticated: true,
               })
-              .then((response) => {
-                // /auth/refresh returns tokens ONLY (no user). Update just the tokens —
-                // clobbering the user with `undefined` dropped is_admin and downgraded the
-                // admin nav to a normal-user view until a full reload (the idle-refresh bug).
-                const { access_token, refresh_token } = response.data
-                useAuthStore.setState({
-                  accessToken: access_token,
-                  refreshToken: refresh_token,
-                  isAuthenticated: true,
-                })
-                return access_token
-              })
-              .finally(() => {
-                refreshPromise = null
-              })
-          }
-
-          const newToken = await refreshPromise
-          originalRequest.headers.Authorization = `Bearer ${newToken}`
-          return api(originalRequest)
-        } catch {
-          refreshPromise = null
-          logout()
-          redirectToLogin()
+              return access_token
+            })
+            .finally(() => {
+              refreshPromise = null
+            })
         }
-      } else {
+
+        const newToken = await refreshPromise
+        originalRequest.headers.Authorization = `Bearer ${newToken}`
+        return api(originalRequest)
+      } catch {
+        refreshPromise = null
         logout()
         redirectToLogin()
       }
@@ -96,8 +97,8 @@ export const authApi = {
 
   me: () => api.get('/auth/me'),
 
-  refresh: (refreshToken: string) =>
-    api.post('/auth/refresh', { refresh_token: refreshToken }),
+  // Refresh via the HttpOnly cookie (H3) — no token argument.
+  refresh: () => api.post('/auth/refresh', {}),
 
   setupMfa: () => api.post('/auth/mfa/setup'),
 
