@@ -4,7 +4,10 @@
 # ==================== API / Dashboard ====================
 api:
   dashboard: true
-  insecure: true  # Dashboard on port 8080 (internal only)
+  # insecure:false — no unauthenticated dashboard/API on :8080 (M6). Expose the
+  # dashboard, if needed, via an authenticated TLS router (api@internal + auth
+  # middleware), never the insecure entrypoint.
+  insecure: false
 
 # ==================== Entry Points ====================
 entryPoints:
