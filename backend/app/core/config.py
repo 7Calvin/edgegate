@@ -4,7 +4,7 @@ Application Settings and Configuration
 import os
 from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import PostgresDsn, field_validator, computed_field
+from pydantic import PostgresDsn, field_validator, computed_field, model_validator
 from pydantic_core import MultiHostUrl
 
 
@@ -261,6 +261,35 @@ class Settings(BaseSettings):
     INITIAL_ADMIN_EMAIL: str = "admin@empresa.com"
     INITIAL_ADMIN_PASSWORD: str = "temp123$$"
     INITIAL_ADMIN_REQUIRE_MFA: bool = True
+
+    @model_validator(mode="after")
+    def _reject_default_secrets_in_production(self) -> "Settings":
+        """Fail closed: refuse to boot in production with known default/placeholder
+        secrets. These defaults are public (shipped in config.py / docker-compose.yml
+        / .env.example), so leaving any in place = trivial auth bypass (forged admin
+        JWT) or host compromise (agent tokens). install.sh generates strong random
+        values; for manual setups use `openssl rand -hex 32`."""
+        if self.ENVIRONMENT != "production":
+            return self
+        insecure = {
+            "SECRET_KEY": {"change-me-in-production", "dev-secret-key-change-in-production"},
+            "JWT_SECRET_KEY": {"change-me-jwt-secret", "dev-jwt-secret-change-in-production"},
+            "POSTGRES_PASSWORD": {"change-me", "changeme"},
+            "NAT_AGENT_TOKEN": {"changeme-nat-token"},
+            "UPDATE_AGENT_TOKEN": {"changeme-update-token"},
+            "INITIAL_ADMIN_PASSWORD": {"temp123$$", "Admin123!@#456", "ChangeThisPassword123!"},
+        }
+        offenders = sorted(
+            name for name, bad in insecure.items() if getattr(self, name, None) in bad
+        )
+        if offenders:
+            raise ValueError(
+                "Refusing to start with ENVIRONMENT=production while these secrets are "
+                "still at their public default value: " + ", ".join(offenders) + ". "
+                "Set strong unique values (install.sh generates them; or use "
+                "`openssl rand -hex 32`)."
+            )
+        return self
 
 
 # Singleton instance
