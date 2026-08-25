@@ -4,7 +4,7 @@
 **Referência:** [`security-review-2026-08.md`](security-review-2026-08.md) ·
 **Patch:** `edgegate-security-v2.0.2.patch`
 
-> **Estado no servidor de teste (`32.193.244.215`, homolog v2.0.2):** o patch runtime
+> **Estado no servidor de teste (homolog v2.0.2):** o patch runtime
 > foi aplicado em `/opt/edgegate`, as imagens **backend/frontend/nat-agent foram
 > rebuildadas**, o Traefik e os agents de host (ipsec/update) reiniciados. Não é mais
 > live-patch efêmero — está **baked nas imagens (persistente)**. Todas as correções
@@ -41,8 +41,8 @@
 
 ## Ambiente de teste
 
-- **Homolog `32.193.244.215` (v2.0.2)** — patch runtime aplicado em `/opt/edgegate`,
-  imagens **rebuildadas** (backend/frontend/nat-agent), Traefik + agents host reiniciados.
+- **Homolog (v2.0.2)** — patch runtime aplicado em `/opt/edgegate`, imagens
+  **rebuildadas** (backend/frontend/nat-agent), Traefik + agents host reiniciados.
   **Persistente** (sobrevive a restart/recreate). Todos os containers healthy.
-- Senha do painel `admin` = `temp123$$` (rotacionar). Socket em `660` (H6; cai em reboot
+- Rotacionar a senha default do admin do painel. Socket em `660` (H6; cai em reboot
   até o install/scripts corrigidos entrarem).

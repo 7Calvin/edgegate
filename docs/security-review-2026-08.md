@@ -215,8 +215,8 @@ installer.
 
 ### L1 — Arquivo `nul` na raiz vaza IP de produção + host key SSH
 `nul` (untracked, **não vazou no GitHub** — nunca foi commitado) contém uma linha
-`known_hosts`: `18.229.12.160 ssh-ed25519 AAAA…` (host key **pública**, não é
-segredo, mas expõe o IP de deploy em AWS sa-east-1). Artefato de `> nul`/`ssh-keyscan
+`known_hosts` (`<IP-de-produção> ssh-ed25519 AAAA…`) — host key **pública** (não é
+segredo), mas expõe um IP de deploy. Artefato de `> nul`/`ssh-keyscan
 … nul` em Git-Bash (no Windows `nul` é o dispositivo nulo; no Git-Bash vira arquivo).
 **Fix:** deletar `nul`; ignorar nomes reservados do Windows no `.gitignore`.
 *(Resolvido nesta branch.)*
