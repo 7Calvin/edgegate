@@ -23,6 +23,11 @@ from app.schemas.auth import (
 )
 from app.schemas.common import MessageResponse
 from app.core.net import get_trusted_client_ip
+from app.core.rate_limit import (
+    check_login_allowed,
+    record_login_failure,
+    record_login_success,
+)
 
 router = APIRouter()
 
@@ -47,6 +52,16 @@ async def login(
     auth_service = AuthService(db)
     client_ip = get_client_ip(request)
 
+    # Brute-force protection: reject once the per-IP / per-username failure
+    # window is exhausted (H2). Fails open if Redis is unavailable.
+    rl = await check_login_allowed(client_ip, data.username)
+    if rl.limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please try again later.",
+            headers={"Retry-After": str(rl.retry_after)},
+        )
+
     user, error, mfa_pending = await auth_service.authenticate_user(
         username=data.username,
         password=data.password,
@@ -55,6 +70,7 @@ async def login(
     )
 
     if error:
+        await record_login_failure(client_ip, data.username)
         from app.services.audit_service import record_event
         await record_event(
             action="Falha de login", resource_type="auth", username=data.username,
@@ -65,6 +81,9 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=error
         )
+
+    # Correct credentials -> clear the failure counters for this IP/username.
+    await record_login_success(client_ip, data.username)
 
     # Block service accounts from web console login
     if user.user_type == UserType.SERVICE:
