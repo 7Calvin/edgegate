@@ -79,7 +79,7 @@ export interface LoginRequest {
 
 export interface LoginResponse {
   access_token: string
-  refresh_token: string
+  refresh_token?: string | null  // H3: delivered as HttpOnly cookie, not in the body
   token_type: string
   expires_in: number
   user: User
