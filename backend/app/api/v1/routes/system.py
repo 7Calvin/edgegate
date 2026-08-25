@@ -17,7 +17,7 @@ import tempfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
@@ -137,6 +137,29 @@ class UpdateRequest(BaseModel):
 async def get_version(user: User = Depends(get_current_active_user)):
     """Running version for the UI badge. Any authenticated user."""
     return await update_service.get_version()
+
+
+# Curated, self-contained API reference (generated from the OpenAPI spec at build time
+# into app/static/api-reference.html). Served ONLY to authenticated users — it replaces
+# the public Swagger /docs (disabled in production). The panel opens it via a token-
+# authenticated fetch and renders it in an iframe, because browsers don't send the Bearer
+# header on plain navigation. include_in_schema=False keeps it out of the spec itself.
+_API_REFERENCE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "static", "api-reference.html"
+)
+
+
+@router.get("/api-reference", response_class=HTMLResponse, include_in_schema=False)
+async def api_reference(user: User = Depends(get_current_active_user)):
+    """Serve the curated API reference page (authenticated users only)."""
+    try:
+        with open(_API_REFERENCE_PATH, encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API reference not generated for this build",
+        )
 
 
 @router.get("/update/check")

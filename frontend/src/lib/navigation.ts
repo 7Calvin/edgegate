@@ -9,6 +9,7 @@ import {
   ScrollText,
   Settings,
   Server,
+  BookOpen,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -71,6 +72,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { name: 'Auditoria', href: '/audit', icon: ScrollText, adminOnly: true, keywords: 'audit logs eventos historico login' },
       { name: 'Configurações', href: '/settings', icon: Settings, adminOnly: false, keywords: 'settings conta senha mfa dominio ldap ad active directory autenticacao' },
+      { name: 'Referência da API', href: '/api-reference', icon: BookOpen, adminOnly: false, keywords: 'api docs swagger openapi referencia endpoints documentacao monitoramento' },
     ],
   },
 ]
