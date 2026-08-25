@@ -37,6 +37,9 @@ export default function SettingsPage() {
   const [qrCode, setQrCode] = useState<string | null>(null)
   const [backupCodes, setBackupCodes] = useState<string[]>([])
   const [copiedCodes, setCopiedCodes] = useState(false)
+  const [mfaSecret, setMfaSecret] = useState('')
+  const [showManualKey, setShowManualKey] = useState(false)
+  const [copiedSecret, setCopiedSecret] = useState(false)
   const [editDomain, setEditDomain] = useState('')
   const [isEditingDomain, setIsEditingDomain] = useState(false)
   const [showMfa, setShowMfa] = useState(false)
@@ -132,8 +135,10 @@ export default function SettingsPage() {
   const setupMfaMutation = useMutation({
     mutationFn: () => authApi.setupMfa(),
     onSuccess: (response) => {
-      const { qr_code, backup_codes } = response.data
+      const { qr_code, secret, backup_codes } = response.data
       setQrCode(qr_code)
+      setMfaSecret(secret || '')
+      setShowManualKey(false)
       setBackupCodes(backup_codes || [])
       toast({
         title: 'MFA Setup',
@@ -151,6 +156,8 @@ export default function SettingsPage() {
       toast({ title: 'MFA enabled successfully' })
       setMfaCode('')
       setQrCode(null)
+      setMfaSecret('')
+      setShowManualKey(false)
       setBackupCodes([])
       checkAuth()
     },
@@ -391,6 +398,43 @@ export default function SettingsPage() {
                             className="w-48 h-48"
                           />
                         </div>
+                        {/* Manual entry alternative — for when the QR can't be scanned */}
+                        {mfaSecret && (
+                          <div className="space-y-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setShowManualKey((v) => !v)}
+                            >
+                              <Key className="h-4 w-4 mr-2" />
+                              {showManualKey ? 'Ocultar chave' : 'Não consegue escanear? Inserir chave manualmente'}
+                            </Button>
+                            {showManualKey && (
+                              <div className="flex items-center gap-2">
+                                <code className="flex-1 break-all rounded-lg bg-muted px-3 py-2 font-mono text-sm tracking-wider">
+                                  {mfaSecret}
+                                </code>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  title="Copiar chave"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(mfaSecret)
+                                    setCopiedSecret(true)
+                                    setTimeout(() => setCopiedSecret(false), 2000)
+                                  }}
+                                >
+                                  {copiedSecret ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                                </Button>
+                              </div>
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                              Insira esta chave manualmente no app autenticador (tipo de chave: baseada em tempo / TOTP).
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       {/* Backup Codes Section */}
