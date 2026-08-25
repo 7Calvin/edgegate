@@ -187,16 +187,23 @@ async def refresh_token(
 
 @router.post("/logout", response_model=MessageResponse)
 async def logout(
+    request: Request,
     response: Response,
     user: User = Depends(get_current_user)
 ):
     """
-    Logout current user: clears the refresh-token cookie (H3).
-
-    Note: access tokens are stateless JWTs; for true server-side invalidation,
-    implement token blacklisting with Redis (tracked as M8).
+    Logout current user: clears the refresh-token cookie (H3) and revokes the
+    current access token via the Redis jti blacklist (M8).
     """
     _clear_refresh_cookie(response)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        import time
+        from app.core.security import decode_token
+        from app.core.token_blacklist import revoke_jti
+        payload = decode_token(auth_header[7:])
+        if payload and payload.get("jti") and payload.get("exp"):
+            await revoke_jti(payload["jti"], int(payload["exp"] - time.time()))
     return MessageResponse(message="Logged out successfully")
 
 

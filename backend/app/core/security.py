@@ -79,7 +79,8 @@ def create_access_token(
     to_encode.update({
         "exp": expire,
         "iat": datetime.utcnow(),
-        "type": "access"
+        "type": "access",
+        "jti": secrets.token_hex(16),  # unique id so logout can revoke it (M8)
     })
 
     encoded_jwt = jwt.encode(

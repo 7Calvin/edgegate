@@ -68,6 +68,15 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # Reject access tokens revoked at logout (M8). Fails open if Redis is down.
+        from app.core.token_blacklist import is_jti_revoked
+        if await is_jti_revoked(payload.get("jti")):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
         # Get user from database
         result = await db.execute(
             select(User).where(User.id == user_id)
