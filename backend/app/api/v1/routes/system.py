@@ -17,7 +17,7 @@ import tempfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
@@ -160,6 +160,25 @@ async def api_reference(user: User = Depends(require_admin)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="API reference not generated for this build",
         )
+
+
+_API_REFERENCE_JS_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "static", "api-reference.js"
+)
+
+
+@router.get("/api-reference.js", include_in_schema=False)
+async def api_reference_js():
+    """Serve the reference page's script as a same-origin EXTERNAL asset. The page is
+    rendered in an iframe whose inline scripts are blocked by the app's strict CSP
+    (script-src 'self', no 'unsafe-inline'); an external same-origin script is allowed.
+    Public — this is generic DOM code (search/tab filtering), no secrets; the HTML with
+    the endpoint list stays behind admin auth."""
+    try:
+        with open(_API_REFERENCE_JS_PATH, encoding="utf-8") as f:
+            return Response(content=f.read(), media_type="application/javascript")
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
 
 
 @router.get("/update/check")
