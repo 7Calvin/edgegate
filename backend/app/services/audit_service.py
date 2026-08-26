@@ -44,6 +44,12 @@ _RULES = [
     ("POST", rf"^{_P}/proxy/routes/?$", "config", "Rota de proxy criada"),
     ("PUT", rf"^{_P}/proxy/routes/[^/]+/?$", "config", "Rota de proxy alterada"),
     ("DELETE", rf"^{_P}/proxy/routes/[^/]+/?$", "config", "Rota de proxy removida"),
+    ("POST", rf"^{_P}/backups/?$", "config", "Backup agendado criado"),
+    ("PUT", rf"^{_P}/backups/[^/]+/?$", "config", "Backup agendado alterado"),
+    ("DELETE", rf"^{_P}/backups/[^/]+/?$", "config", "Backup agendado removido"),
+    # NOTE: /backups/{id}/run is NOT audited here — BackupScheduleService.run() writes the
+    # audit event itself so the background scheduler (which never hits this middleware) is
+    # covered too. Mapping it here as well would double-log the manual run-now.
     ("PUT", rf"^{_P}/proxy/management-domain/?$", "config", "Domínio do painel alterado"),
     ("POST", rf"^{_P}/proxy/certificates/[^/]+/renew/?$", "config", "Certificado reemitido"),
     ("POST", rf"^{_P}/firewall/rules/?$", "config", "Regra de firewall criada"),

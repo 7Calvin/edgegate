@@ -15,6 +15,7 @@ import IPsecPage from '@/pages/IPsecPage'
 import ReverseProxyPage from '@/pages/ReverseProxyPage'
 import AuditPage from '@/pages/AuditPage'
 import ApiReferencePage from '@/pages/ApiReferencePage'
+import BackupPage from '@/pages/BackupPage'
 
 // Layout
 import DashboardLayout from '@/components/layout/DashboardLayout'
@@ -86,6 +87,7 @@ function App() {
           <Route path="audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="api-reference" element={<AdminRoute><ApiReferencePage /></AdminRoute>} />
+          <Route path="backups" element={<AdminRoute><BackupPage /></AdminRoute>} />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -14,6 +14,7 @@ from app.models.network_route import NetworkRoute
 from app.models.ipsec import IPsecConnection, IPsecStatus, IKEVersion, DPDAction
 from app.models.proxy_route import ProxyRoute, ProxyRouteStatus, SSLMode, HealthCheckType
 from app.models.acme_challenge import ACMEChallenge, ACMEChallengeStatus
+from app.models.backup_schedule import BackupSchedule
 
 __all__ = [
     # User
@@ -55,4 +56,6 @@ __all__ = [
     # ACME Challenge
     "ACMEChallenge",
     "ACMEChallengeStatus",
+    # Scheduled SFTP backup
+    "BackupSchedule",
 ]

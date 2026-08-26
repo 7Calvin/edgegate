@@ -685,3 +685,12 @@ export const systemApi = {
     }
   },
 }
+
+export const backupsApi = {
+  list: () => api.get('/backups'),
+  get: (id: string) => api.get(`/backups/${id}`),
+  create: (data: any) => api.post('/backups', data),
+  update: (id: string, data: any) => api.put(`/backups/${id}`, data),
+  remove: (id: string) => api.delete(`/backups/${id}`),
+  run: (id: string) => api.post(`/backups/${id}/run`),
+}

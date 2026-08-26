@@ -381,6 +381,66 @@ async def startup_event():
     if getattr(settings, "IPSEC_STATUS_SYNC_ENABLED", True):
         asyncio.create_task(_ipsec_status_sync_loop())
 
+    # Background scheduled-backup runner: every ~30s, run any enabled backup schedule
+    # whose HH:MM matches the current minute (minute-deduped via last_run_at). Same
+    # advisory-lock pattern — exactly one process schedules, even with multiple workers.
+    async def _backup_scheduler_loop():
+        from sqlalchemy import text, select
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from app.models.backup_schedule import BackupSchedule
+        from app.services.backup_schedule_service import BackupScheduleService, is_due
+
+        try:
+            tz = ZoneInfo(getattr(settings, "SCHEDULER_TIMEZONE", "UTC") or "UTC")
+        except Exception:  # noqa: BLE001
+            logger.warning("Backup scheduler: invalid SCHEDULER_TIMEZONE, falling back to UTC")
+            tz = ZoneInfo("UTC")
+
+        LOCK_KEY = 4823172  # distinct from the other loops' lock ids
+
+        lock_conn = await engine.connect()
+        try:
+            got = (await lock_conn.execute(
+                text("SELECT pg_try_advisory_lock(:k)"), {"k": LOCK_KEY}
+            )).scalar()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Backup scheduler: could not acquire lock: {e}")
+            await lock_conn.close()
+            return
+        if not got:
+            logger.info("Backup scheduler: another worker holds the lock; not scheduling here")
+            await lock_conn.close()
+            return
+        await lock_conn.commit()
+
+        logger.info("Backup scheduler started (tick=30s)")
+        try:
+            while True:
+                try:
+                    now = datetime.now(tz)
+                    async with AsyncSessionLocal() as db:
+                        res = await db.execute(
+                            select(BackupSchedule).where(BackupSchedule.is_enabled == True)  # noqa: E712
+                        )
+                        for s in res.scalars().all():
+                            if is_due(s, now):
+                                logger.info(f"Backup '{s.name}': running (scheduled {now:%H:%M})")
+                                ok, st, msg = await BackupScheduleService(db).run(s)
+                                logger.info(f"Backup '{s.name}': {st} — {(msg or '')[:120]}")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Backup scheduler loop error: {e}")
+                await asyncio.sleep(30)
+        finally:
+            try:
+                await lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LOCK_KEY})
+            except Exception:  # noqa: BLE001
+                pass
+            await lock_conn.close()
+
+    if getattr(settings, "BACKUP_SCHEDULER_ENABLED", True):
+        asyncio.create_task(_backup_scheduler_loop())
+
     # Note: Firewall rules are saved in database and applied by NAT agent
     # The backend does not directly modify iptables (requires privileged container)
 

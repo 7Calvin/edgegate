@@ -10,6 +10,7 @@ import {
   Settings,
   Server,
   BookOpen,
+  DatabaseBackup,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -70,6 +71,7 @@ export const navGroups: NavGroup[] = [
     label: 'Sistema',
     icon: Settings,
     items: [
+      { name: 'Backup', href: '/backups', icon: DatabaseBackup, adminOnly: true, keywords: 'backup agendado sftp scheduled dump pki restaurar exportar' },
       { name: 'Auditoria', href: '/audit', icon: ScrollText, adminOnly: true, keywords: 'audit logs eventos historico login' },
       { name: 'Configurações', href: '/settings', icon: Settings, adminOnly: false, keywords: 'settings conta senha mfa dominio ldap ad active directory autenticacao' },
     ],

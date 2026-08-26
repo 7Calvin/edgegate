@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str = "change-me-in-production"
 
+    # IANA timezone the scheduled-backup runner interprets HH:MM times in. The backend
+    # container runs UTC by default, so set this (e.g. America/Sao_Paulo) to match the
+    # admin's local clock. Invalid/unknown values fall back to UTC.
+    SCHEDULER_TIMEZONE: str = "UTC"
+
     # ==================== API ====================
     API_V1_PREFIX: str = "/api/v1"
     BACKEND_HOST: str = "0.0.0.0"
