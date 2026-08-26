@@ -6,6 +6,7 @@ from datetime import datetime
 from uuid import UUID
 import subprocess
 import os
+import re
 import tempfile
 import logging
 import json
@@ -531,46 +532,48 @@ class VPNService:
             raise Exception(f"Certificate file not found: {e}")
 
     def _generate_placeholder_certs(self, common_name: str) -> dict:
-        """Generate placeholder certificates for development"""
-        logger.warning("Using placeholder certificates - NOT FOR PRODUCTION")
+        """Generate a throwaway self-signed cert/key at RUNTIME (dev fallback).
 
-        placeholder_cert = f"""-----BEGIN CERTIFICATE-----
-MIIBkTCB+wIJAKHBfpn+Yi8xMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnZw
-bi1jYTAeFw0yNjAxMzAwMDAwMDBaFw0zNjAxMjcwMDAwMDBaMBQxEjAQBgNVBAMM
-CXtjb21tb25fbmFtZX0wXDANBgkqhkiG9w0BAQEFAANLADBIAkEA0Z3VS5JJcds3
-xKxzGq3C1k5zV1P3Q4nGLmLz8OkJdZwlVz5jGrYM9+nHKxnGCz6pqJqJmN8MtPvH
-K8MH9qLiNwIDAQABo1AwTjAdBgNVHQ4EFgQUl1lKwGVwQrV3N8A3xZ3P+gqr0T0w
-HwYDVR0jBBgwFoAUfLT3K4xLcxOxKuxPdqxByN3WgH4wDAYDVR0TBAUwAwEB/zAN
-BgkqhkiG9w0BAQsFAANBAHolhVq0I7qYLnjPnfRpvKLyTr5O0wMI5L2qQxF3XsJv
-xZ8xH+7nJdOvLmPgMN6MFprQeCVpYAC5yxI5AJlPq+c=
------END CERTIFICATE-----""".replace("{common_name}", common_name)
+        Never ship a private key in source (M4): this builds an ephemeral RSA key
+        pair on demand with the `cryptography` lib instead of returning a hardcoded
+        PEM. Still NOT for production — the real path is EasyRSA.
+        """
+        logger.warning("Using generated self-signed certificates - NOT FOR PRODUCTION")
 
-        placeholder_key = """-----BEGIN PRIVATE KEY-----
-MIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEA0Z3VS5JJcds3xKxz
-Gq3C1k5zV1P3Q4nGLmLz8OkJdZwlVz5jGrYM9+nHKxnGCz6pqJqJmN8MtPvHK8MH
-9qLiNwIDAQABAkBxMq/vHLQlkDzX+YLsN5xzQklxT0DFzLnx2kcMz8VwqwEZf2bE
-qHxDFxu8hQJ7L7x5yNqN0PkCvZvJmL8VhiYBAiEA7mEdVxN8cUZPq8YXHK5J6dxm
-6q8HQvMkL7u3PzpKZzECIQDhd8K7xK8NQa6Y9CxPps3CQvPhqN0nqKL8wq8jnxmn
-dwIgYaVowaFDpQYbH4Lpk0t5dVVT6zN7WqVxGqKh7w2KuxECIQCIxRLJwNvoLk7A
-cJ7WgJiY2z9lMzW8xC8NyqH7xBc2HwIhAJHnIz3gGqvp/R+5LzjNvCqDLgMl7f6e
-z9j8bGcXxEpv
------END PRIVATE KEY-----"""
+        from datetime import datetime, timedelta, timezone
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
 
-        placeholder_ca = """-----BEGIN CERTIFICATE-----
-MIIBjTCB9wIJAKHBfpn+Yi8wMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnZw
-bi1jYTAeFw0yNjAxMzAwMDAwMDBaFw0zNjAxMjcwMDAwMDBaMBExDzANBgNVBAMM
-BnZwbi1jYTBcMA0GCSqGSIb3DQEBAQUAA0sAMEgCQQDRndVLkklx2zfErHMarcLW
-TnNXU/dDicYuYvPw6Ql1nCVXPmMatgz36ccrGcYLPqmomoZ4zwy0+8crwwf2ouI3
-AgMBAAGjUDBOMB0GA1UdDgQWBBR8tPcrjEtzE7Eq7E92rEHI3daAfjAfBgNVHSME
-GDAWgBR8tPcrjEtzE7Eq7E92rEHI3daAfjAMBgNVHRMEBTADAQH/MA0GCSqGSIb3
-DQEBCwUAA0EAYMq+G1w/qjXjBVSU0C1z3GppTNelY6ifsZRqOLb8S9xbGJIlbhQK
-G4AZmjLbG+8UYeKnGr4kMzYrq4rFjLVlzA==
------END CERTIFICATE-----"""
+        def _self_signed(cn: str) -> tuple[str, str]:
+            key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+            now = datetime.now(timezone.utc)
+            cert = (
+                x509.CertificateBuilder()
+                .subject_name(name)
+                .issuer_name(name)
+                .public_key(key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - timedelta(days=1))
+                .not_valid_after(now + timedelta(days=3650))
+                .sign(key, hashes.SHA256())
+            )
+            key_pem = key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ).decode()
+            return cert.public_bytes(serialization.Encoding.PEM).decode(), key_pem
+
+        client_cert, client_key = _self_signed(common_name)
+        ca_cert, _ = _self_signed("vpn-ca")
 
         return {
-            "ca_cert": placeholder_ca,
-            "client_cert": placeholder_cert,
-            "client_key": placeholder_key,
+            "ca_cert": ca_cert,
+            "client_cert": client_cert,
+            "client_key": client_key,
             "ta_key": None,
         }
 
@@ -795,24 +798,32 @@ G4AZmjLbG+8UYeKnGr4kMzYrq4rFjLVlzA==
 
         return connections
 
+    # Same charset the app enforces on username creation (schemas/user.py). This
+    # is a hard security boundary: `username` is fed to the OpenVPN management
+    # interface, so anything outside this allowlist is rejected before it can
+    # reach a command.
+    _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
+
     async def disconnect_client(self, username: str) -> Tuple[bool, Optional[str]]:
         """Disconnect a specific VPN client by username"""
+        if not self._USERNAME_RE.match(username or ""):
+            return False, "Invalid username"
         try:
-            # OpenVPN management interface: send kill command via echo to management socket
-            # Management interface is typically on port 7505 or unix socket
-            # We'll use docker exec to send kill command to OpenVPN management interface
-
-            # Try using management interface via telnet/nc
+            # OpenVPN management interface: send "kill <cn>" over the management
+            # socket. The command is passed via stdin (NOT interpolated into a
+            # shell string), so even a validated username can never break out
+            # into a shell command. No `bash -c`, no shell metacharacters.
             result = subprocess.run(
-                ["docker", "exec", "edgegate-openvpn", "bash", "-c",
-                 f"echo 'kill {username}' | nc localhost 7505 2>/dev/null || echo 'Management interface not available'"],
+                ["docker", "exec", "-i", "edgegate-openvpn",
+                 "nc", "-w", "2", "localhost", "7505"],
+                input=f"kill {username}\n",
                 capture_output=True,
                 text=True,
                 timeout=5
             )
 
             # If management interface is not available, try alternative method
-            if "not available" in result.stdout or result.returncode != 0:
+            if result.returncode != 0:
                 logger.warning(f"Management interface not available, trying alternative method to disconnect {username}")
 
                 # Alternative: Send SIGUSR1 to OpenVPN to reload, which will disconnect all clients

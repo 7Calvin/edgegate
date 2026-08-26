@@ -49,15 +49,15 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
-# Trusted Host (security)
+# Trusted Host (security) — allowlist configurable via ALLOWED_HOSTS (default ["*"])
 if not settings.DEBUG:
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["*"]  # Configure com seus domínios em produção
+        allowed_hosts=settings.ALLOWED_HOSTS
     )
 
 
@@ -222,6 +222,33 @@ async def startup_event():
             logger.warning(f"IPsec startup apply error: {e}")
 
     asyncio.create_task(_ipsec_apply_on_startup())
+
+    # On startup, (re)apply the VPN firewall (VPN_FILTER allow-lists) and the NAT
+    # gateway from the DB. A container recreate/update resets the OpenVPN VPN_FILTER
+    # to its default-deny and can drop the gateway-NAT rules, while the console/DB
+    # still show them configured — this reconciles the runtime with the DB so an
+    # allowed internal network (or NAT gateway) survives a rebuild without a manual
+    # "Apply". Idempotent: apply re-reads the DB and rebuilds the rules.
+    async def _firewall_apply_on_startup():
+        await asyncio.sleep(12)  # let the openvpn / nat-agent containers settle
+        try:
+            async with AsyncSessionLocal() as db:
+                from app.services.firewall_service import FirewallService
+                ok, err = await FirewallService(db).apply_rules()
+                if ok:
+                    logger.info("Firewall: re-applied VPN rules on startup")
+                else:
+                    logger.warning(f"Firewall startup apply failed: {err}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Firewall startup apply error: {e}")
+        try:
+            from app.api.v1.routes.firewall import apply_gateway_via_agent
+            await apply_gateway_via_agent()
+            logger.info("NAT gateway: re-applied on startup")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"NAT gateway startup apply error: {e}")
+
+    asyncio.create_task(_firewall_apply_on_startup())
 
     # Background bandwidth sampler: snapshot server-wide OpenVPN byte counters
     # on an interval so the dashboard throughput chart has real time-series data.

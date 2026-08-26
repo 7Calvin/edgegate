@@ -6,9 +6,22 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime, timedelta
 from uuid import UUID
 import ipaddress
+import re
 
 from app.models.vpn_profile import AuthMethod
 from app.core.config import settings
+
+
+def _validate_dns_domains(v):
+    """push_dns_domains are written into the CCD file as
+    push "dhcp-option DOMAIN <domain>"; reject anything that could break out of
+    the quoted directive and inject OpenVPN config (H4)."""
+    if v is None:
+        return v
+    for d in v:
+        if not re.match(r'^[A-Za-z0-9._-]+$', d):
+            raise ValueError(f"Invalid DNS domain: {d}")
+    return v
 
 
 class VPNProfileBase(BaseModel):
@@ -51,6 +64,11 @@ class VPNProfileCreate(VPNProfileBase):
                 raise ValueError(f"Invalid DNS server IP: {ip}")
         return v
 
+    @field_validator("push_dns_domains")
+    @classmethod
+    def validate_dns_domains(cls, v):
+        return _validate_dns_domains(v)
+
 
 class VPNProfileUpdate(BaseModel):
     """Schema for updating VPN profile"""
@@ -66,6 +84,37 @@ class VPNProfileUpdate(BaseModel):
     push_dns_servers: Optional[List[str]] = None
     push_dns_domains: Optional[List[str]] = None
     is_active: Optional[bool] = None
+
+    # Update rewrites the same CCD/config as Create — re-apply the same validation
+    # (H4). None-tolerant so partial updates work.
+    @field_validator("allowed_networks", "denied_networks", "push_routes")
+    @classmethod
+    def validate_networks(cls, v):
+        if v is None:
+            return v
+        for network in v:
+            try:
+                ipaddress.ip_network(network, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid network: {network}")
+        return v
+
+    @field_validator("push_dns_servers")
+    @classmethod
+    def validate_dns_servers(cls, v):
+        if v is None:
+            return v
+        for ip in v:
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                raise ValueError(f"Invalid DNS server IP: {ip}")
+        return v
+
+    @field_validator("push_dns_domains")
+    @classmethod
+    def validate_dns_domains(cls, v):
+        return _validate_dns_domains(v)
 
 
 class VPNProfileResponse(BaseModel):

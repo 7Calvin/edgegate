@@ -42,6 +42,32 @@ Windows, make sure your editor writes LF for `*.sh`, `*.service`, and `vpnctl`.
 4. For changes that touch a running appliance (install/update/PKI/DB), describe
    how you verified it end-to-end.
 
+## Security tooling
+
+EdgeGate terminates VPN traffic and edits host firewall/NAT, so a security
+regression can mean host root or an auth bypass. Two local (opt-in) layers help
+catch mistakes before they land — neither runs in CI, both live in the repo:
+
+1. **Pre-commit hooks** (`gitleaks` + `bandit` + private-key/large-file checks).
+   Set up once per clone:
+
+   ```bash
+   pip install pre-commit && pre-commit install
+   pre-commit run --all-files   # optional: scan everything now
+   ```
+
+   The `.gitleaks.toml` allowlist already covers the known placeholders
+   (`.env.example`, `change-me*`, etc.), so it won't false-positive on those.
+
+2. **`security-guardian` agent** (`.claude/agents/security-guardian.md`). Before
+   committing, ask Claude Code to *"review my diff with the security-guardian"* —
+   it flags EdgeGate-specific regressions (hardcoded secrets, shell/config
+   injection, unauthenticated endpoints, agents bound to `0.0.0.0`, insecure
+   compose defaults) against the baseline in `docs/security-review-2026-08.md`.
+
+The current, verified security baseline and remediation backlog live in
+[`docs/security-review-2026-08.md`](docs/security-review-2026-08.md).
+
 ## Reporting security issues
 
 Please do not open public issues for security vulnerabilities. Contact the

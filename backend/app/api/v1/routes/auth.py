@@ -2,7 +2,7 @@
 Authentication Routes
 """
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,8 +23,43 @@ from app.schemas.auth import (
 )
 from app.schemas.common import MessageResponse
 from app.core.net import get_trusted_client_ip
+from app.core.rate_limit import (
+    check_login_allowed,
+    record_login_failure,
+    record_login_success,
+)
+from app.core.config import settings
 
 router = APIRouter()
+
+# ---- Refresh-token cookie (H3) ---------------------------------------------
+# The long-lived refresh token is delivered as an HttpOnly cookie so that
+# JavaScript (and therefore XSS) can never read it. Scoped to the auth path so
+# it is only sent to /login-adjacent endpoints, not every API call.
+REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_PATH = "/api/v1/auth"
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=token,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+        httponly=True,
+        secure=settings.ENVIRONMENT != "development",
+        samesite="strict",
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+        httponly=True,
+        secure=settings.ENVIRONMENT != "development",
+        samesite="strict",
+    )
 
 
 def get_client_ip(request: Request) -> Optional[str]:
@@ -36,6 +71,7 @@ def get_client_ip(request: Request) -> Optional[str]:
 async def login(
     data: LoginRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -47,6 +83,16 @@ async def login(
     auth_service = AuthService(db)
     client_ip = get_client_ip(request)
 
+    # Brute-force protection: reject once the per-IP / per-username failure
+    # window is exhausted (H2). Fails open if Redis is unavailable.
+    rl = await check_login_allowed(client_ip, data.username)
+    if rl.limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please try again later.",
+            headers={"Retry-After": str(rl.retry_after)},
+        )
+
     user, error, mfa_pending = await auth_service.authenticate_user(
         username=data.username,
         password=data.password,
@@ -55,6 +101,7 @@ async def login(
     )
 
     if error:
+        await record_login_failure(client_ip, data.username)
         from app.services.audit_service import record_event
         await record_event(
             action="Falha de login", resource_type="auth", username=data.username,
@@ -66,6 +113,9 @@ async def login(
             detail=error
         )
 
+    # Correct credentials -> clear the failure counters for this IP/username.
+    await record_login_success(client_ip, data.username)
+
     # Block service accounts from web console login
     if user.user_type == UserType.SERVICE:
         raise HTTPException(
@@ -76,6 +126,8 @@ async def login(
     tokens = auth_service.create_tokens(user, mfa_pending=mfa_pending)
 
     if not mfa_pending:
+        # Full session: deliver the refresh token only as an HttpOnly cookie (H3).
+        _set_refresh_cookie(response, tokens["refresh_token"])
         from app.services.audit_service import record_event
         await record_event(
             action="Login no painel", resource_type="auth", user_id=user.id,
@@ -85,7 +137,7 @@ async def login(
 
     return LoginResponse(
         access_token=tokens["access_token"],
-        refresh_token=tokens["refresh_token"],
+        refresh_token=None,  # never in the body — see _set_refresh_cookie (H3)
         expires_in=tokens["expires_in"],
         user_id=str(user.id),
         username=user.username,
@@ -98,39 +150,60 @@ async def login(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
-    data: RefreshTokenRequest,
+    request: Request,
+    response: Response,
+    data: Optional[RefreshTokenRequest] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Refresh access token using refresh token"""
+    """Refresh the access token. The refresh token is read from the HttpOnly
+    cookie (H3); a request body is accepted only as a fallback for non-browser
+    clients."""
     auth_service = AuthService(db)
 
-    tokens = await auth_service.refresh_access_token(data.refresh_token)
+    token = request.cookies.get(REFRESH_COOKIE_NAME) or (data.refresh_token if data else None)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing refresh token"
+        )
+
+    tokens = await auth_service.refresh_access_token(token)
 
     if not tokens:
+        _clear_refresh_cookie(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token"
         )
 
+    # Rotate the refresh cookie on every use.
+    _set_refresh_cookie(response, tokens["refresh_token"])
     return TokenResponse(
         access_token=tokens["access_token"],
-        refresh_token=tokens["refresh_token"],
+        refresh_token=None,  # cookie only (H3)
         expires_in=tokens["expires_in"]
     )
 
 
 @router.post("/logout", response_model=MessageResponse)
 async def logout(
+    request: Request,
+    response: Response,
     user: User = Depends(get_current_user)
 ):
     """
-    Logout current user.
-
-    Note: JWT tokens are stateless, so this endpoint is mainly for
-    client-side token cleanup. For true invalidation, implement
-    token blacklisting with Redis.
+    Logout current user: clears the refresh-token cookie (H3) and revokes the
+    current access token via the Redis jti blacklist (M8).
     """
-    # TODO: Add token to blacklist in Redis
+    _clear_refresh_cookie(response)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        import time
+        from app.core.security import decode_token
+        from app.core.token_blacklist import revoke_jti
+        payload = decode_token(auth_header[7:])
+        if payload and payload.get("jti") and payload.get("exp"):
+            await revoke_jti(payload["jti"], int(payload["exp"] - time.time()))
     return MessageResponse(message="Logged out successfully")
 
 

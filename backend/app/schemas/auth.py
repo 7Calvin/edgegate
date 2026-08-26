@@ -24,7 +24,9 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     """Login response schema"""
     access_token: str
-    refresh_token: str
+    # Refresh token is delivered as an HttpOnly cookie (H3), never in the body,
+    # so JavaScript / XSS cannot read it. Kept here only for backward-compat.
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     expires_in: int
     user_id: str
@@ -38,14 +40,18 @@ class LoginResponse(BaseModel):
 class TokenResponse(BaseModel):
     """Token refresh response"""
     access_token: str
-    refresh_token: str
+    refresh_token: Optional[str] = None  # rotated via HttpOnly cookie (H3), not body
     token_type: str = "bearer"
     expires_in: int
 
 
 class RefreshTokenRequest(BaseModel):
-    """Refresh token request"""
-    refresh_token: str
+    """Refresh token request.
+
+    refresh_token is optional: the token now normally arrives as an HttpOnly
+    cookie. The body field is kept for backward-compat / non-browser clients.
+    """
+    refresh_token: Optional[str] = None
 
 
 class MFASetupResponse(BaseModel):

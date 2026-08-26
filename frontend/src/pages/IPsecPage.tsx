@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { useToast } from '@/hooks/use-toast'
+import { getApiErrorMessage } from '@/lib/apiError'
 import { PageHeader } from '@/components/PageHeader'
 import {
   Shield,
@@ -258,11 +259,11 @@ export default function IPsecPage() {
       setIsAddModalOpen(false)
       setFormData(createInitialForm(serverInfo || undefined))
     },
-    onError: (error: Error & { response?: { data?: { detail?: string } } }) => {
+    onError: (error) => {
       toast({
         variant: 'destructive',
         title: 'Falha ao criar conexão',
-        description: error.response?.data?.detail || 'Erro desconhecido',
+        description: getApiErrorMessage(error),
       })
     },
   })
@@ -277,11 +278,11 @@ export default function IPsecPage() {
       setIsEditModalOpen(false)
       setEditingConnection(null)
     },
-    onError: (error: Error & { response?: { data?: { detail?: string } } }) => {
+    onError: (error) => {
       toast({
         variant: 'destructive',
         title: 'Falha ao atualizar conexão',
-        description: error.response?.data?.detail || 'Erro desconhecido',
+        description: getApiErrorMessage(error),
       })
     },
   })
@@ -293,8 +294,8 @@ export default function IPsecPage() {
       queryClient.invalidateQueries({ queryKey: ['ipsec-config-preview'] })
       toast({ title: 'Conexão excluída' })
     },
-    onError: () => {
-      toast({ variant: 'destructive', title: 'Falha ao excluir conexão' })
+    onError: (error) => {
+      toast({ variant: 'destructive', title: 'Falha ao excluir conexão', description: getApiErrorMessage(error) })
     },
   })
 
@@ -305,27 +306,13 @@ export default function IPsecPage() {
       queryClient.invalidateQueries({ queryKey: ['ipsec-status'] })
       toast({ title: 'Túnel iniciado' })
     },
-    onError: (error: Error & { response?: { data?: { detail?: string | { error?: string; suggestion?: string; error_type?: string } } } }) => {
-      const detail = error.response?.data?.detail
-      let errorMsg = 'Erro desconhecido'
-      let suggestion = ''
-
-      if (typeof detail === 'string') {
-        errorMsg = detail
-      } else if (detail && typeof detail === 'object') {
-        errorMsg = detail.error || 'Erro desconhecido'
-        suggestion = detail.suggestion || ''
-      }
-
+    onError: (error) => {
+      // getApiErrorMessage already folds the backend's {error, suggestion} detail
+      // into one friendly string.
       toast({
         variant: 'destructive',
         title: 'Falha ao iniciar túnel',
-        description: (
-          <div className="space-y-1">
-            <p>{errorMsg}</p>
-            {suggestion && <p className="text-xs opacity-80">{suggestion}</p>}
-          </div>
-        ),
+        description: getApiErrorMessage(error),
       })
     },
   })

@@ -14,6 +14,17 @@ import enum
 from app.db.session import Base
 
 
+def _escape_secret(value: str) -> str:
+    """Escape a value for a double-quoted strongswan secret (ipsec.secrets /
+    swanctl `secrets {}`). Backslash MUST be escaped first, then the double quote,
+    so an arbitrary PSK (including `"` or `\\`) is written safely and can't break
+    out of the quoted string. Newlines/control chars are rejected upstream in the
+    schema (they can't be represented on a single-line directive)."""
+    if value is None:
+        return value
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 class IPsecStatus(str, enum.Enum):
     """IPsec connection status"""
     ACTIVE = "active"
@@ -197,9 +208,10 @@ class IPsecConnection(Base):
         if self.auth_method == "psk" and self.psk:
             # StrongSwan looks up PSK by leftid/rightid in both directions
             # Adding both directions ensures PSK is found regardless of initiator
+            psk = _escape_secret(self.psk)
             lines = [
-                f'{self.left_id} {self.right_id} : PSK "{self.psk}"',
-                f'{self.right_id} {self.left_id} : PSK "{self.psk}"',
+                f'{self.left_id} {self.right_id} : PSK "{psk}"',
+                f'{self.right_id} {self.left_id} : PSK "{psk}"',
             ]
             return '\n'.join(lines)
         return ""
@@ -350,7 +362,7 @@ class IPsecConnection(Base):
             lines = [f"    ike-{self.name} {{"]
             for i, rid in enumerate(ids, 1):
                 lines.append(f"        id-{i} = {rid}")
-            lines.append(f'        secret = "{self.psk}"')
+            lines.append(f'        secret = "{_escape_secret(self.psk)}"')
             lines.append("    }")
             return "\n".join(lines)
         return ""

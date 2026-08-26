@@ -1293,19 +1293,27 @@ fix_permissions() {
 
     cd ${INSTALL_DIR}
 
-    # 1. Fix docker.sock permissions on host
-    log_info "  Setting docker.sock permissions..."
-    chmod 666 /var/run/docker.sock
-
-    # 2. Fix /app/data permissions via volume
-    log_info "  Fixing /app/data permissions..."
-    VOLUME_PATH=$(docker volume inspect edgegate_backend_data --format '{{ .Mountpoint }}' 2>/dev/null || echo "")
-    if [ -n "$VOLUME_PATH" ] && [ -d "$VOLUME_PATH" ]; then
-        chown -R 1000:1000 "$VOLUME_PATH"
-        chmod -R 755 "$VOLUME_PATH"
+    # 1. Restrict docker.sock to the docker group (660), NOT world-writable (666).
+    #    666 makes the root-equivalent Docker socket usable by ANY local user =
+    #    host root for everyone. The backend keeps access via `group_add:
+    #    ${DOCKER_GID}` in the generated compose (docker group membership).
+    log_info "  Restricting docker.sock permissions (docker group, 660)..."
+    if getent group docker >/dev/null 2>&1; then
+        chgrp docker /var/run/docker.sock 2>/dev/null || true
     fi
+    chmod 660 /var/run/docker.sock
 
-    # Also fix via container
+    # 2. Fix /app/data (and logs) permissions. These are HOST bind mounts
+    #    (compose: ${INSTALL_DIR}/data/backend:/app/data), and bind mounts do NOT
+    #    inherit the image's ownership — the host dir's owner is what the backend
+    #    (uid 1000/vpnuser) sees. Chown the host dir DIRECTLY so it works even
+    #    before the container is up (no race, survives recreate and down -v).
+    log_info "  Fixing /app/data (bind mount) permissions..."
+    mkdir -p "${INSTALL_DIR}/data/backend" "${INSTALL_DIR}/logs" 2>/dev/null || true
+    chown -R 1000:1000 "${INSTALL_DIR}/data/backend" "${INSTALL_DIR}/logs" 2>/dev/null || true
+    chmod -R 755 "${INSTALL_DIR}/data/backend" "${INSTALL_DIR}/logs" 2>/dev/null || true
+
+    # Best-effort container-side fallback (harmless if the container isn't up yet).
     docker exec -u root edgegate-backend chown -R vpnuser:vpnuser /app/data 2>/dev/null || true
     docker exec -u root edgegate-backend chmod -R 755 /app/data 2>/dev/null || true
 

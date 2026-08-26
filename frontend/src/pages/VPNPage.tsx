@@ -12,6 +12,7 @@ import { formatBytes } from '@/lib/utils'
 import { Download, RefreshCw, Shield, ShieldOff, Settings, Save, Plus, X, AlertTriangle, Pencil } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import type { VPNServerConfig } from '@/types'
+import { getApiErrorMessage } from '@/lib/apiError'
 
 export default function VPNPage() {
   const { user } = useAuthStore()
@@ -104,7 +105,7 @@ export default function VPNPage() {
       toast({ title: 'Server started', description: 'OpenVPN server started successfully' })
     },
     onError: (error: any) => {
-      toast({ variant: 'destructive', title: 'Failed to start server', description: error.response?.data?.detail })
+      toast({ variant: 'destructive', title: 'Failed to start server', description: getApiErrorMessage(error) })
     },
   })
 
@@ -115,7 +116,7 @@ export default function VPNPage() {
       toast({ title: 'Server stopped', description: 'OpenVPN server stopped successfully' })
     },
     onError: (error: any) => {
-      toast({ variant: 'destructive', title: 'Failed to stop server', description: error.response?.data?.detail })
+      toast({ variant: 'destructive', title: 'Failed to stop server', description: getApiErrorMessage(error) })
     },
   })
 
@@ -126,7 +127,7 @@ export default function VPNPage() {
       toast({ title: 'Server restarted', description: 'OpenVPN server restarted successfully' })
     },
     onError: (error: any) => {
-      toast({ variant: 'destructive', title: 'Failed to restart server', description: error.response?.data?.detail })
+      toast({ variant: 'destructive', title: 'Failed to restart server', description: getApiErrorMessage(error) })
     },
   })
 

@@ -141,6 +141,13 @@ secrets/
 # ==================== OS ====================
 Thumbs.db
 Desktop.ini
+# Windows reserved device names — accidental `> nul`/`ssh-keyscan ... nul` in Git
+# Bash writes a real file instead of the null device. Never commit these.
+nul
+[Nn]ul
+[Cc]on
+[Pp]rn
+[Aa]ux
 .AppleDouble
 .LSOverride
 ._*
