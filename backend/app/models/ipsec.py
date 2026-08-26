@@ -294,9 +294,20 @@ class IPsecConnection(Base):
                 f"            }}",
             ]))
 
-        return "\n".join([
+        # Failover: the peer runs two tunnels (one per WAN) that present distinct ids
+        # (see failover_peer_ids). strongSwan's default identity uniqueness (uniqueids=yes)
+        # makes each new tunnel's INITIAL_CONTACT delete the other on our responder → the
+        # tunnel flaps every ~DPD interval. `unique = no` lets both paths coexist as separate
+        # SAs. Only set it for failover connections; single-link keeps the default so a
+        # reconnecting peer still replaces its own stale SA.
+        has_failover = bool((getattr(self, "right_ip_backup", None) or "").strip())
+        header = [
             f"    {self.name} {{",
             f"        version = {self._swanctl_version()}",
+        ]
+        if has_failover:
+            header.append(f"        unique = no")
+        header += [
             f"        local_addrs = {self.left_ip}",
             f"        remote_addrs = {self._remote_addrs()}",
             f"        proposals = {self.ike_cipher}",
@@ -318,7 +329,8 @@ class IPsecConnection(Base):
             "\n".join(children),
             f"        }}",
             f"    }}",
-        ])
+        ]
+        return "\n".join(header)
 
     def to_swanctl_secret(self) -> str:
         """Generate this connection's `ike-<name> { ... }` entry for swanctl.conf's
