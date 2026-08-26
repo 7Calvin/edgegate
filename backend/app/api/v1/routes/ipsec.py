@@ -580,7 +580,15 @@ def _fg_base(base: str, conn_name: str) -> str:
 def _export_fortigate(c, fortios, wan_pri, wan_bak, lan_if, sla_src, lid_pri, lid_bak,
                       base, client_lan) -> str:
     prop_ike, dhgrp = _split_cipher(c.ike_cipher)
-    prop_esp, _ = _split_cipher(c.esp_cipher)
+    prop_esp, esp_grp = _split_cipher(c.esp_cipher)
+    # Phase-2 PFS must mirror EdgeGate's swanctl esp_proposals, NOT the IKE cipher.
+    # Emitting the IKE dhgrp on phase2 told the FortiGate to enable PFS (dhgrp 14)
+    # while our swanctl ran no-PFS ESP (esp_cipher without a modp group) -> the peer's
+    # CREATE_CHILD_SA (with KE) was rejected NO_PROPOSAL_CHOSEN and the tunnel died on
+    # the first CHILD_SA rekey. Only enable PFS here when the ESP cipher carries a DH
+    # group; otherwise disable it so both ends agree (FortiGate phase2 defaults to PFS).
+    esp_has_pfs = any(p in _DH_TO_GRP for p in (c.esp_cipher or "").split("-"))
+    p2pfs = f"set pfs enable\n        set dhgrp {esp_grp}" if esp_has_pfs else "set pfs disable"
     # FortiGate object names (constraints: phase1 <= 15 chars, SLA must have NO hyphen)
     b = _fg_base(base, c.name)
     n1, n2 = f"{b}-01", f"{b}-02"
@@ -646,7 +654,7 @@ config vpn ipsec phase2-interface
     edit "{n1}"
         set phase1name "{n1}"
         set proposal {prop_esp}
-        set dhgrp {dhgrp}
+        {p2pfs}
         set auto-negotiate enable
         set keylifeseconds 3600
         set src-subnet {rnet} {rmask}
@@ -808,7 +816,7 @@ config vpn ipsec phase2-interface
     edit "{n1}"
         set phase1name "{n1}"
         set proposal {prop_esp}
-        set dhgrp {dhgrp}
+        {p2pfs}
         set auto-negotiate enable
         set keylifeseconds 3600
         set src-subnet {rnet} {rmask}
@@ -817,7 +825,7 @@ config vpn ipsec phase2-interface
     edit "{n2}"
         set phase1name "{n2}"
         set proposal {prop_esp}
-        set dhgrp {dhgrp}
+        {p2pfs}
         set auto-negotiate enable
         set keylifeseconds 3600
         set src-subnet {rnet} {rmask}
