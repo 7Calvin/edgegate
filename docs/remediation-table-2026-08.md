@@ -35,7 +35,7 @@
 
 | Achado | Serviço | Situação |
 |---|---|---|
-| **M3** (Grafana `admin/admin`) | Grafana / compose | O `docker-compose.yml` de `/opt/edgegate` é o **gerado pelo install** (≠ repo); a fix está no compose do repo/patch. Grafana roda sob profile opcional. Aplicar via `.env` do box se subir o monitoring. |
+| **M3** 🟢 (Grafana `admin/admin`) — **rebaixado p/ Baixo/preventivo** | Grafana / compose | O Grafana **não existe em deploy real**: o `docker-compose.yml` gerado pelo `install.sh` **nem inclui** o serviço (só o compose do repo, sob profile opt-in `monitoring`). Confirmado no homolog: sem container, sem listener 3001/9090, sem `GRAFANA_ADMIN_PASSWORD` no `.env`. O `admin/admin` nunca esteve exposto. Fix (senha obrigatória) é só higiene no compose do repo. |
 | **H6 scripts** (`install.sh`, `fix-*`) | Infra | O socket já está 660 no host; a fix nos scripts entra no próximo install/update a partir do patch. |
 | **C2 / C3 / L2 / deps jose·aiohttp / CI** | vários | Adiados — arquitetural, migração ou rebuild/teste (ver `security-review-2026-08.md`). |
 

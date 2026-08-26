@@ -153,11 +153,16 @@ roteia `PathPrefix('/docs') || PathPrefix('/openapi.json')` no Traefik sem
 middleware de auth. Superfície da API enumerável publicamente.
 **Fix:** desabilitar docs em produção ou gate atrás de auth.
 
-### M3 — Grafana `admin/admin`
+### M3 — Grafana `admin/admin`  🟢 **(rebaixado p/ Baixo/preventivo)**
 **CWE-798.** `docker-compose.yml:270` `GF_SECURITY_ADMIN_PASSWORD:-admin`;
-espelhado em `.env.example:131-132`. Profile `monitoring`, publicado em `0.0.0.0`.
-**Fix:** senha gerada (o `install.sh` já gera outras); bind em loopback/atrás de
-proxy autenticado. *(Novo — não estava nos assessments anteriores.)*
+espelhado em `.env.example:131-132`. Profile `monitoring`.
+**Nota de severidade (2026-08-25):** o `docker-compose.yml` **gerado pelo `install.sh`
+NÃO inclui o Grafana** — só o compose do repo o tem, sob profile opt-in `monitoring`
+que ninguém ativa por padrão. Confirmado no homolog: **sem container, sem listener em
+3001/9090, sem `GRAFANA_ADMIN_PASSWORD` no `.env`**. Ou seja o `admin/admin` **nunca
+esteve exposto em deploy real** — é **preventivo, não vuln viva**.
+**Fix (higiene):** senha obrigatória no compose do repo (feito). *(Novo — não estava
+nos assessments anteriores.)*
 
 ### M4 — PEM private key de dev commitada em código de produção
 **CWE-798.** `backend/app/services/vpn_service.py:548-557` embute um bloco
@@ -266,7 +271,7 @@ Corrigidos e commitados nesta branch (a maioria deploy-validada no homolog v2.0.
 | **M6** | Traefik `api.insecure=false` | config |
 | **M7** | HSTS + CSP + Referrer-Policy no nginx do frontend | ✅ headers presentes, painel carrega |
 | **M9 / L3** | CORS restrito + `ALLOWED_HOSTS` configurável | smoke import |
-| **M3** | Grafana sem `admin/admin` (obrigatório) | YAML |
+| **M3** 🟢 | Grafana sem `admin/admin` (obrigatório) — **preventivo**: Grafana não entra no compose do install (sem container/porta no homolog) | YAML |
 | **M10** | dedup de deps + bump `python-multipart` (CVE) | — |
 | **M2** | Swagger fechado em prod (sessão paralela) | ✅ |
 
