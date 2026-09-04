@@ -10,7 +10,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.connection import ConnectionStatus
 from app.services.connection_service import ConnectionService
-from app.dependencies.auth import get_current_active_user, require_admin
+from app.dependencies.auth import get_current_active_user, require_read_access
 from app.schemas.connection import (
     ConnectionResponse,
     ConnectionListResponse,
@@ -33,7 +33,7 @@ async def list_connections(
     active_only: bool = Query(False),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -80,7 +80,7 @@ async def list_connections(
 
 @router.get("/active", response_model=list[ActiveConnectionResponse])
 async def get_active_connections(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all currently active connections (admin only) with live data from OpenVPN"""
@@ -127,7 +127,7 @@ async def get_active_connections(
 
 @router.get("/live")
 async def get_live_connections(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -217,7 +217,7 @@ async def get_my_active_connections(
 async def get_throughput(
     window: str = Query("24h", pattern="^(1h|6h|24h|7d)$"),
     source: str = Query("openvpn", pattern="^(openvpn|ipsec|total)$"),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Bandwidth throughput time-series for the dashboard chart (admin only).
@@ -236,7 +236,7 @@ async def get_throughput(
 @router.get("/{connection_id}", response_model=ConnectionResponse)
 async def get_connection(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get connection details (admin only)"""
@@ -257,7 +257,7 @@ async def get_connection(
 async def disconnect_connection(
     connection_id: UUID,
     data: DisconnectRequest = None,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Force disconnect a connection (admin only)"""
@@ -307,7 +307,7 @@ async def disconnect_connection(
 async def disconnect_user(
     user_id: UUID,
     reason: str = Query(None),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Disconnect all connections for a user (admin only)"""
@@ -325,7 +325,7 @@ async def disconnect_user(
 
 @router.get("/stats/summary", response_model=ConnectionStats)
 async def get_connection_stats(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get connection statistics (admin only)"""
@@ -340,7 +340,7 @@ async def get_connection_stats(
 async def get_bandwidth_stats(
     user_id: Optional[UUID] = None,
     period: str = Query("day", pattern="^(hour|day|week|month)$"),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get bandwidth usage statistics (admin only)"""
@@ -357,7 +357,7 @@ async def get_bandwidth_stats(
 @router.get("/stats/user/{user_id}", response_model=UserConnectionStats)
 async def get_user_connection_stats(
     user_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get connection statistics for a specific user (admin only)"""
@@ -386,7 +386,7 @@ async def get_my_connection_stats(
 @router.post("/cleanup", response_model=MessageResponse)
 async def cleanup_stale_connections(
     max_age_hours: int = Query(24, ge=1, le=168),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """

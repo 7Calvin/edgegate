@@ -189,7 +189,7 @@ def created_ctx_from_body(request, body: bytes) -> Optional[dict]:
         ctx["resource_id"] = str(rid)
     path = request.url.path
     if "/users" in path:
-        role = "admin" if obj.get("is_admin") else "usuário"
+        role = "admin" if obj.get("is_admin") else ("somente leitura" if obj.get("is_readonly") else "usuário")
         ctx["suffix"] = role
         ctx["details"]["perfil"] = role
         if obj.get("email"):

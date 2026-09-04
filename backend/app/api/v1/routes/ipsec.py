@@ -13,7 +13,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.ipsec import IPsecStatus
 from app.services.ipsec_service import IPsecService
-from app.dependencies.auth import require_admin
+from app.dependencies.auth import require_read_access
 from app.schemas.ipsec import (
     IPsecConnectionCreate,
     IPsecConnectionUpdate,
@@ -37,7 +37,7 @@ async def list_ipsec_connections(
     is_enabled: Optional[bool] = None,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -64,7 +64,7 @@ async def list_ipsec_connections(
 @router.post("/connections", response_model=IPsecConnectionResponse, status_code=status.HTTP_201_CREATED)
 async def create_ipsec_connection(
     data: IPsecConnectionCreate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -99,7 +99,7 @@ async def create_ipsec_connection(
 @router.get("/connections/{connection_id}", response_model=IPsecConnectionResponse)
 async def get_ipsec_connection(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get IPsec connection details (admin only)"""
@@ -120,7 +120,7 @@ async def get_ipsec_connection(
 async def update_ipsec_connection(
     connection_id: UUID,
     data: IPsecConnectionUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -182,7 +182,7 @@ async def update_ipsec_connection(
 @router.delete("/connections/{connection_id}", response_model=MessageResponse)
 async def delete_ipsec_connection(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -227,7 +227,7 @@ async def delete_ipsec_connection(
 @router.post("/connections/{connection_id}/start")
 async def start_ipsec_connection(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -284,7 +284,7 @@ async def start_ipsec_connection(
 @router.post("/connections/{connection_id}/stop", response_model=MessageResponse)
 async def stop_ipsec_connection(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -316,7 +316,7 @@ async def stop_ipsec_connection(
 @router.post("/connections/{connection_id}/restart", response_model=MessageResponse)
 async def restart_ipsec_connection(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -350,7 +350,7 @@ async def restart_ipsec_connection(
 @router.post("/connections/{connection_id}/switch-backup")
 async def switch_to_backup(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Manually switch the tunnel to prefer the BACKUP endpoint (admin only). Reorders
@@ -368,7 +368,7 @@ async def switch_to_backup(
 @router.post("/connections/{connection_id}/rollback-primary")
 async def rollback_to_primary(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Manually switch the tunnel back to prefer the PRIMARY endpoint (admin only)."""
@@ -385,7 +385,7 @@ async def rollback_to_primary(
 @router.post("/connections/{connection_id}/test-failover")
 async def test_failover(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Simulate a path failure to verify failover (admin only): blocks the active peer
@@ -405,7 +405,7 @@ async def test_failover(
 
 @router.get("/status", response_model=IPsecGlobalStatus)
 async def get_ipsec_status(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -423,7 +423,7 @@ async def get_ipsec_status(
 @router.get("/status/{connection_name}")
 async def get_connection_status(
     connection_name: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get status of a specific IPsec connection (admin only)"""
@@ -444,7 +444,7 @@ async def get_connection_status(
 
 @router.post("/reload", response_model=IPsecReloadResponse)
 async def reload_ipsec_config(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -466,7 +466,7 @@ async def reload_ipsec_config(
 
 @router.post("/apply", response_model=IPsecReloadResponse)
 async def apply_ipsec_config(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -493,7 +493,7 @@ async def apply_ipsec_config(
 
 @router.post("/restart", response_model=IPsecReloadResponse)
 async def restart_strongswan(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -962,7 +962,7 @@ async def export_connection_config(
     localid_bak: str = "",
     base: str = "",
     client_lan: str = "",
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Render this connection's config for the peer device. target=fortigate -> a
@@ -1007,7 +1007,7 @@ async def export_connection_config(
 @router.get("/connections/{connection_id}/config", response_class=PlainTextResponse)
 async def get_connection_config(
     connection_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """The swanctl config this single connection generates (PSK masked). Read-only —
@@ -1028,7 +1028,7 @@ async def get_connection_config(
 
 @router.get("/config/preview", response_model=IPsecConfigPreview)
 async def preview_ipsec_config(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1046,7 +1046,7 @@ async def preview_ipsec_config(
 
 @router.get("/config/ipsec.conf", response_class=PlainTextResponse)
 async def get_ipsec_conf(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get generated ipsec.conf content (admin only)"""
@@ -1059,7 +1059,7 @@ async def get_ipsec_conf(
 
 @router.get("/config/ipsec.secrets", response_class=PlainTextResponse)
 async def get_ipsec_secrets(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1078,7 +1078,7 @@ async def get_ipsec_secrets(
 
 @router.get("/version")
 async def get_strongswan_version(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get StrongSwan version (admin only)"""
@@ -1095,7 +1095,7 @@ async def get_strongswan_version(
 
 @router.get("/statusall")
 async def get_detailed_status(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1112,7 +1112,7 @@ async def get_detailed_status(
 async def get_ipsec_logs(
     lines: int = Query(100, ge=10, le=1000),
     connection: Optional[str] = Query(None, description="Filter logs by connection name"),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1127,7 +1127,7 @@ async def get_ipsec_logs(
 
 @router.post("/sync-status", response_model=MessageResponse)
 async def sync_connection_statuses(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1145,7 +1145,7 @@ async def sync_connection_statuses(
 
 @router.get("/server-info")
 async def get_server_network_info(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """

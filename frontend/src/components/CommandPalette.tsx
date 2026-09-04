@@ -17,13 +17,13 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const inputRef = useRef<HTMLInputElement>(null)
 
   const items = useMemo(() => {
-    const visible = navigation.filter((i) => !i.adminOnly || user?.is_admin)
+    const visible = navigation.filter((i) => !i.adminOnly || user?.is_admin || user?.is_readonly)
     const q = query.trim().toLowerCase()
     if (!q) return visible
     return visible.filter(
       (i) => i.name.toLowerCase().includes(q) || (i.keywords ?? '').includes(q)
     )
-  }, [query, user?.is_admin])
+  }, [query, user?.is_admin, user?.is_readonly])
 
   useEffect(() => {
     if (open) {

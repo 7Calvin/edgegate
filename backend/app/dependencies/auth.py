@@ -156,6 +156,38 @@ async def require_admin(
     return user
 
 
+# HTTP methods that only read state. Read-only principals are limited to these.
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+async def require_read_access(
+    request: Request,
+    user: User = Depends(get_current_active_user),
+) -> User:
+    """Require at least read access to a management endpoint.
+
+    Admins may use any method. Read-only principals (is_readonly, non-admin) may use
+    safe/read methods only; any write is rejected. Authorization is read off the DB user
+    row, so it holds identically for JWT and API-key callers.
+
+    Raises:
+        HTTPException 403: If the user is neither an admin nor a read-only user allowed
+            on this method.
+    """
+    if user.is_admin:
+        return user
+    if user.is_readonly and request.method in SAFE_METHODS:
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "Read-only access: write operations are not permitted"
+            if user.is_readonly
+            else "Admin privileges required"
+        ),
+    )
+
+
 async def require_mfa_verified(
     user: User = Depends(get_current_active_user)
 ) -> User:

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.user import User
 from app.services.traefik_service import TraefikService
-from app.dependencies.auth import require_admin
+from app.dependencies.auth import require_read_access
 from app.schemas.proxy_route import (
     ProxyRouteCreate,
     ProxyRouteUpdate,
@@ -35,7 +35,7 @@ async def list_proxy_routes(
     is_enabled: bool = None,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """List all proxy routes (admin only)."""
@@ -58,7 +58,7 @@ async def list_proxy_routes(
 @router.post("/routes", status_code=status.HTTP_201_CREATED)
 async def create_proxy_route(
     data: ProxyRouteCreate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -83,7 +83,7 @@ async def create_proxy_route(
 @router.get("/routes/{route_id}")
 async def get_proxy_route(
     route_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Get proxy route details (admin only)."""
@@ -104,7 +104,7 @@ async def get_proxy_route(
 async def update_proxy_route(
     route_id: UUID,
     data: ProxyRouteUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -136,7 +136,7 @@ async def update_proxy_route(
 @router.delete("/routes/{route_id}", response_model=MessageResponse)
 async def delete_proxy_route(
     route_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -169,7 +169,7 @@ async def delete_proxy_route(
 
 @router.post("/apply", response_model=MessageResponse)
 async def apply_proxy_config(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -193,7 +193,7 @@ async def apply_proxy_config(
 
 @router.get("/config/preview", response_model=TraefikConfigPreview)
 async def preview_proxy_config(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -212,7 +212,7 @@ async def preview_proxy_config(
 
 @router.get("/status")
 async def get_traefik_status(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Get Traefik status via its API (admin only)."""
@@ -225,7 +225,7 @@ async def get_traefik_status(
 
 @router.post("/health-check")
 async def check_all_backends(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Run health check on all enabled backends (admin only)."""
@@ -239,7 +239,7 @@ async def check_all_backends(
 @router.post("/routes/{route_id}/health-check")
 async def check_route_health(
     route_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Run health check on a specific route's backend (admin only)."""
@@ -262,7 +262,7 @@ async def check_route_health(
 
 @router.get("/certificates", response_model=CertificateListResponse)
 async def list_certificates(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -278,7 +278,7 @@ async def list_certificates(
 @router.get("/certificates/{domain}")
 async def get_certificate_details(
     domain: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed certificate information for a domain (admin only)."""
@@ -298,7 +298,7 @@ async def get_certificate_details(
 @router.post("/certificates/{domain}/renew", response_model=CertificateRenewResponse)
 async def renew_certificate(
     domain: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -327,7 +327,7 @@ async def renew_certificate(
 @router.post("/certificates/{domain}/reissue", response_model=CertificateRenewResponse)
 async def reissue_certificate(
     domain: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -350,7 +350,7 @@ async def reissue_certificate(
 @router.delete("/certificates/{domain}", response_model=MessageResponse)
 async def delete_certificate(
     domain: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -386,7 +386,7 @@ class ManagementDomainUpdate(BaseModel):
 
 @router.get("/management-domain")
 async def get_management_domain(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Get the current management panel domain from docker-compose.yml."""
@@ -397,7 +397,7 @@ async def get_management_domain(
 @router.put("/management-domain")
 async def update_management_domain(
     data: ManagementDomainUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """

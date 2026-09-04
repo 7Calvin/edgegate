@@ -142,6 +142,8 @@ async def login(
         user_id=str(user.id),
         username=user.username,
         is_admin=user.is_admin,
+        is_readonly=user.is_readonly,
+        role=user.role,
         mfa_enabled=user.mfa_enabled,
         mfa_required=user.mfa_required,
         mfa_pending=mfa_pending
@@ -238,6 +240,8 @@ async def get_current_session(
         username=user.username,
         user_type=user.user_type.value,
         is_admin=user.is_admin,
+        is_readonly=user.is_readonly,
+        role=user.role,
         mfa_enabled=user.mfa_enabled,
         mfa_required=user.mfa_required,
         issued_at=datetime.utcnow(),
@@ -381,6 +385,8 @@ async def verify_mfa_login(
         user_id=str(verified_user.id),
         username=verified_user.username,
         is_admin=verified_user.is_admin,
+        is_readonly=verified_user.is_readonly,
+        role=verified_user.role,
         mfa_enabled=verified_user.mfa_enabled,
         mfa_required=verified_user.mfa_required,
         mfa_pending=False

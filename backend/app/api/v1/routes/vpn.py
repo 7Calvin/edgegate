@@ -9,7 +9,7 @@ from uuid import UUID
 from app.db.session import get_db
 from app.models.user import User
 from app.services.vpn_service import VPNService, get_server_config, save_server_config
-from app.dependencies.auth import get_current_active_user, require_admin
+from app.dependencies.auth import get_current_active_user, require_read_access
 from app.schemas.vpn import (
     VPNProfileCreate,
     VPNProfileUpdate,
@@ -156,7 +156,7 @@ async def regenerate_certificate(
 
 @router.get("/profiles", response_model=list[VPNProfileResponse])
 async def list_vpn_profiles(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """List all VPN profiles (admin only)"""
@@ -175,7 +175,7 @@ async def list_vpn_profiles(
 async def create_vpn_profile_for_user(
     user_id: UUID,
     data: VPNProfileCreate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Create VPN profile for a specific user (admin only)"""
@@ -211,7 +211,7 @@ async def create_vpn_profile_for_user(
 async def update_vpn_profile(
     profile_id: UUID,
     data: VPNProfileUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Update VPN profile settings (admin only)"""
@@ -232,7 +232,7 @@ async def update_vpn_profile(
 async def revoke_vpn_profile(
     profile_id: UUID,
     reason: str = None,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Revoke VPN profile and certificate (admin only)"""
@@ -265,7 +265,7 @@ async def revoke_vpn_profile(
 @router.delete("/profiles/{profile_id}", response_model=MessageResponse)
 async def delete_vpn_profile(
     profile_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete VPN profile permanently (admin only)"""
@@ -294,7 +294,7 @@ async def delete_vpn_profile(
 
 @router.get("/server/status", response_model=VPNServerStatus)
 async def get_vpn_server_status(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get OpenVPN server status (admin only)"""
@@ -306,7 +306,7 @@ async def get_vpn_server_status(
 
 @router.post("/server/start", response_model=MessageResponse)
 async def start_vpn_server(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Start OpenVPN server (admin only)"""
@@ -324,7 +324,7 @@ async def start_vpn_server(
 
 @router.post("/server/stop", response_model=MessageResponse)
 async def stop_vpn_server(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Stop OpenVPN server (admin only)"""
@@ -342,7 +342,7 @@ async def stop_vpn_server(
 
 @router.post("/server/restart", response_model=MessageResponse)
 async def restart_vpn_server(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Restart OpenVPN server (admin only)"""
@@ -360,7 +360,7 @@ async def restart_vpn_server(
 
 @router.get("/server/connections")
 async def get_active_connections(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get list of currently connected VPN clients (admin only)"""
@@ -373,7 +373,7 @@ async def get_active_connections(
 @router.post("/server/connections/{username}/disconnect", response_model=MessageResponse)
 async def disconnect_vpn_client(
     username: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Disconnect a specific VPN client (admin only)"""
@@ -408,7 +408,7 @@ async def has_vpn_profiles(db: AsyncSession) -> bool:
 
 @router.get("/server/config", response_model=VPNServerConfig)
 async def get_vpn_server_config(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Get VPN server configuration (admin only)"""
@@ -421,7 +421,7 @@ async def get_vpn_server_config(
 @router.put("/server/config", response_model=VPNServerConfig)
 async def update_vpn_server_config(
     data: VPNServerConfigUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -521,7 +521,7 @@ async def update_vpn_server_config(
 @router.put("/server/network", response_model=MessageResponse)
 async def change_vpn_network_endpoint(
     data: VPNNetworkChangeRequest,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Change the VPN subnet (DISRUPTIVE).
@@ -569,7 +569,7 @@ class VPNDisconnectRequest(BaseModel):
 
 @router.get("/server/download")
 async def download_server_config(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """

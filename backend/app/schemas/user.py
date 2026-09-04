@@ -41,6 +41,7 @@ class UserCreate(UserBase):
     email: Optional[EmailStr] = None  # Optional for all users
     user_type: UserType = UserType.HUMAN
     is_admin: bool = False
+    is_readonly: bool = False  # read-only grant (ignored if is_admin)
     mfa_required: bool = False
     max_concurrent_connections: int = Field(default=1, ge=1, le=10)
     bandwidth_limit_mbps: Optional[int] = Field(None, ge=1, le=10000)
@@ -78,6 +79,7 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
+    is_readonly: Optional[bool] = None
     mfa_required: Optional[bool] = None
     max_concurrent_connections: Optional[int] = Field(None, ge=1, le=10)
     bandwidth_limit_mbps: Optional[int] = Field(None, ge=1, le=10000)
@@ -94,6 +96,8 @@ class UserResponse(BaseModel):
     auth_source: AuthSource = AuthSource.LOCAL
     is_active: bool
     is_admin: bool
+    is_readonly: bool = False
+    role: str = "user"
     mfa_required: bool
     mfa_enabled: bool
     max_concurrent_connections: int
@@ -123,6 +127,8 @@ class UserListResponse(BaseModel):
     auth_source: AuthSource = AuthSource.LOCAL
     is_active: bool
     is_admin: bool
+    is_readonly: bool = False
+    role: str = "user"
     mfa_enabled: bool
     mfa_required: bool
     last_login_at: Optional[datetime]
@@ -193,6 +199,7 @@ class ServiceAccountCreate(BaseModel):
     service_name: str = Field(..., min_length=3, max_length=100)
     service_description: Optional[str] = Field(None, max_length=500)
     is_admin: bool = False
+    is_readonly: bool = False  # read-only grant (ignored if is_admin)
     allowed_source_ips: List[str] = Field(default=[])
     max_concurrent_connections: int = Field(default=5, ge=1, le=100)
     bandwidth_limit_mbps: Optional[int] = Field(None, ge=1, le=10000)
@@ -229,6 +236,8 @@ class ServiceAccountResponse(BaseModel):
     user_type: UserType
     is_active: bool
     is_admin: bool
+    is_readonly: bool = False
+    role: str = "user"
     allowed_source_ips: List[str]
     max_concurrent_connections: int
     bandwidth_limit_mbps: Optional[int]
@@ -254,6 +263,8 @@ class UserMeResponse(BaseModel):
     email: Optional[str]
     user_type: UserType
     is_admin: bool
+    is_readonly: bool = False
+    role: str = "user"
     mfa_required: bool
     mfa_enabled: bool
     max_concurrent_connections: int

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { formatDateTime } from '@/lib/tz'
-import { Plus, Search, UserCheck, UserX, Key, X, Eye, EyeOff, Server, User as UserIcon, Trash2, Copy, Check, AlertTriangle, ShieldCheck, ShieldOff, Smartphone, Network, Shield, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Search, UserCheck, UserX, Key, X, Eye, EyeOff, Server, User as UserIcon, Trash2, Copy, Check, AlertTriangle, Smartphone, Network, Shield, ChevronDown, ChevronRight } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { TrustedHostsModal } from '@/components/TrustedHostsModal'
 import { parseHostEntry } from '@/lib/cidr'
@@ -25,11 +25,21 @@ export default function UsersPage() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [userType, setUserType] = useState<'human' | 'service'>('human')
-  const [newUser, setNewUser] = useState({
+  const [newUser, setNewUser] = useState<{
+    username: string
+    password: string
+    role: 'user' | 'readonly' | 'admin'
+    description: string
+  }>({
     username: '',
     password: '',
-    is_admin: false,
+    role: 'user',
     description: '',
+  })
+  // Read-only and admin are mutually exclusive; the UI picks one role, mapped to flags here.
+  const roleToFlags = (role: 'user' | 'readonly' | 'admin') => ({
+    is_admin: role === 'admin',
+    is_readonly: role === 'readonly',
   })
   // Optional Trusted Hosts at creation (collapsed by default; empty = allow all)
   const [showTrustedHosts, setShowTrustedHosts] = useState(false)
@@ -139,12 +149,14 @@ export default function UsersPage() {
     mutationFn: (): Promise<import('axios').AxiosResponse> => {
       // Trusted Hosts only apply to admins and service accounts; don't attach
       // them to a plain VPN user where they'd be stored but never enforced.
-      const trustedHosts = (userType === 'service' || newUser.is_admin) ? newTrustedHosts : []
+      const flags = roleToFlags(newUser.role)
+      const trustedHosts = (userType === 'service' || newUser.role !== 'user') ? newTrustedHosts : []
       if (userType === 'service') {
         return usersApi.createServiceAccount({
           service_name: newUser.username,
           service_description: newUser.description || undefined,
-          is_admin: newUser.is_admin,
+          is_admin: flags.is_admin,
+          is_readonly: flags.is_readonly,
           allowed_source_ips: trustedHosts,
         })
       }
@@ -152,7 +164,8 @@ export default function UsersPage() {
         username: newUser.username,
         password: newUser.password,
         user_type: userType as 'human' | 'service',
-        is_admin: newUser.is_admin,
+        is_admin: flags.is_admin,
+        is_readonly: flags.is_readonly,
         description: newUser.description || undefined,
         allowed_source_ips: trustedHosts,
       }
@@ -204,19 +217,19 @@ export default function UsersPage() {
     },
   })
 
-  const toggleAdminMutation = useMutation({
-    mutationFn: ({ id, isAdmin }: { id: string; isAdmin: boolean }) =>
-      usersApi.update(id, { is_admin: isAdmin }),
+  const changeRoleMutation = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: 'user' | 'readonly' | 'admin' }) =>
+      usersApi.update(id, roleToFlags(role)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
-      toast({ title: 'Função de administrador atualizada com sucesso' })
+      toast({ title: 'Função atualizada com sucesso' })
     },
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } } }
-      const message = err.response?.data?.detail || 'Falha ao atualizar a função de administrador'
+      const message = err.response?.data?.detail || 'Falha ao atualizar a função'
       toast({
         variant: 'destructive',
-        title: 'Não foi possível atualizar a função de administrador',
+        title: 'Não foi possível atualizar a função',
         description: message,
       })
     },
@@ -226,7 +239,7 @@ export default function UsersPage() {
     setShowCreateModal(false)
     setShowPassword(false)
     setUserType('human')
-    setNewUser({ username: '', password: '', is_admin: false, description: '' })
+    setNewUser({ username: '', password: '', role: 'user', description: '' })
     setShowTrustedHosts(false)
     setNewTrustedHosts([])
     setTrustedHostDraft('')
@@ -396,44 +409,39 @@ export default function UsersPage() {
                           }`}>
                             {user.user_type === 'service' ? 'Serviço' : 'Humano'}
                           </span>
-                          <button
-                            onClick={() => {
+                          <select
+                            value={user.role ?? (user.is_admin ? 'admin' : user.is_readonly ? 'readonly' : 'user')}
+                            onChange={(e) => {
                               if (user.id === currentUser?.id || user.auth_source === 'ad') return
-                              toggleAdminMutation.mutate({
+                              changeRoleMutation.mutate({
                                 id: user.id,
-                                isAdmin: !user.is_admin,
+                                role: e.target.value as 'user' | 'readonly' | 'admin',
                               })
                             }}
-                            disabled={user.id === currentUser?.id || toggleAdminMutation.isPending || user.auth_source === 'ad'}
-                            className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
+                            disabled={user.id === currentUser?.id || changeRoleMutation.isPending || user.auth_source === 'ad'}
+                            className={`text-xs px-1.5 py-0.5 rounded border border-input bg-background transition-colors ${
                               user.id === currentUser?.id || user.auth_source === 'ad'
                                 ? 'cursor-not-allowed opacity-50'
                                 : 'cursor-pointer hover:opacity-80'
                             } ${
                               user.is_admin
-                                ? 'bg-warning/20 text-warning'
-                                : 'bg-muted text-muted-foreground'
+                                ? 'text-warning'
+                                : user.is_readonly
+                                  ? 'text-sky-400'
+                                  : 'text-muted-foreground'
                             }`}
                             title={
                               user.auth_source === 'ad'
                                 ? 'Função gerenciada pelo Active Directory'
                                 : user.id === currentUser?.id
-                                ? 'Não é possível alterar sua própria função de administrador'
-                                : user.is_admin
-                                  ? 'Clique para remover a função de administrador'
-                                  : 'Clique para conceder a função de administrador'
+                                ? 'Não é possível alterar sua própria função'
+                                : 'Alterar a função do usuário'
                             }
                           >
-                            {user.is_admin ? (
-                              <>
-                                <ShieldCheck className="h-3 w-3" /> Admin
-                              </>
-                            ) : (
-                              <>
-                                <ShieldOff className="h-3 w-3" /> Usuário
-                              </>
-                            )}
-                          </button>
+                            <option value="user">Usuário</option>
+                            <option value="readonly">Somente leitura</option>
+                            <option value="admin">Admin</option>
+                          </select>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground max-w-48 truncate">
@@ -494,7 +502,7 @@ export default function UsersPage() {
                           </span>
                         ) : (
                         <div className="flex justify-end gap-1">
-                          {(user.user_type === 'service' || user.is_admin) && (
+                          {(user.user_type === 'service' || user.is_admin || user.is_readonly) && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -661,18 +669,26 @@ export default function UsersPage() {
                 </div>
               )}
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="new-admin"
-                  checked={newUser.is_admin}
-                  onChange={(e) => setNewUser({ ...newUser, is_admin: e.target.checked })}
-                  className="h-4 w-4"
-                />
-                <Label htmlFor="new-admin">Administrador</Label>
+              <div className="space-y-2">
+                <Label htmlFor="new-role">Função</Label>
+                <select
+                  id="new-role"
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value as 'user' | 'readonly' | 'admin' })}
+                  className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  <option value="user">Usuário {userType === 'service' ? '(sem acesso ao painel/API)' : ''}</option>
+                  <option value="readonly">Somente leitura (lê tudo, não altera)</option>
+                  <option value="admin">Administrador (acesso total)</option>
+                </select>
+                {newUser.role === 'readonly' && (
+                  <p className="text-xs text-muted-foreground">
+                    Acesso de leitura a todo o painel/API. Escritas são bloqueadas.
+                  </p>
+                )}
               </div>
 
-              {(userType === 'service' || newUser.is_admin) && (
+              {(userType === 'service' || newUser.role !== 'user') && (
                 <div className="rounded-md border">
                   <button
                     type="button"

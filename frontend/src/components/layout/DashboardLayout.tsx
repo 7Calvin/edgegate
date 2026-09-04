@@ -43,7 +43,7 @@ export default function DashboardLayout() {
 
   // Filter each group's items by admin visibility, drop empty groups.
   const visibleGroups = navGroups
-    .map((g) => ({ ...g, items: g.items.filter((i) => (!i.adminOnly || user?.is_admin) && !i.hidden) }))
+    .map((g) => ({ ...g, items: g.items.filter((i) => (!i.adminOnly || user?.is_admin || user?.is_readonly) && !i.hidden) }))
     .filter((g) => g.items.length > 0)
   // Collapsed rail shows every leaf as a flat icon list (groups flatten).
   const visibleLeaves = visibleGroups.flatMap((g) => g.items)
@@ -193,7 +193,7 @@ export default function DashboardLayout() {
             <div className="ml-1 flex items-center gap-2 border-l border-border pl-3">
               <div className="hidden text-right leading-tight sm:block">
                 <p className="text-sm font-medium text-foreground">{user?.username}</p>
-                <p className="text-xs text-muted-foreground">{user?.is_admin ? 'Administrador' : 'Usuário'}</p>
+                <p className="text-xs text-muted-foreground">{user?.is_admin ? 'Administrador' : user?.is_readonly ? 'Somente leitura' : 'Usuário'}</p>
               </div>
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-primary ring-1 ring-primary/30">
                 {user?.username?.[0]?.toUpperCase() || 'U'}

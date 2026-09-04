@@ -244,11 +244,11 @@ export default function SettingsPage() {
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Tipo de conta</p>
-            <p className="font-medium text-foreground">{user?.is_admin ? 'Admin' : 'Usuário'}</p>
+            <p className="font-medium text-foreground">{user?.is_admin ? 'Admin' : user?.is_readonly ? 'Somente leitura' : 'Usuário'}</p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Papel</p>
-            <p className="font-medium text-foreground">{user?.is_admin ? 'Administrador' : 'Usuário'}</p>
+            <p className="font-medium text-foreground">{user?.is_admin ? 'Administrador' : user?.is_readonly ? 'Somente leitura' : 'Usuário'}</p>
           </div>
         </CardContent>
       </Card>

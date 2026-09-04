@@ -32,6 +32,8 @@ class LoginResponse(BaseModel):
     user_id: str
     username: str
     is_admin: bool
+    is_readonly: bool = False
+    role: str = "user"
     mfa_enabled: bool = False
     mfa_required: bool = False
     mfa_pending: bool = False  # True if MFA is required but not yet provided
@@ -146,6 +148,8 @@ class SessionInfo(BaseModel):
     username: str
     user_type: str
     is_admin: bool
+    is_readonly: bool = False
+    role: str = "user"
     mfa_enabled: bool
     mfa_required: bool
     issued_at: datetime

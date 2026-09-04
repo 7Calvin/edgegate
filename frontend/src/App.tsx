@@ -49,7 +49,9 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (!user?.is_admin) {
+  // Read-only principals may view admin pages (they can GET); write actions 403 on the
+  // backend. Only plain (non-admin, non-readonly) users are redirected away.
+  if (!user?.is_admin && !user?.is_readonly) {
     return <Navigate to="/dashboard" replace />
   }
 

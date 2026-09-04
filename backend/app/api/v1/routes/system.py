@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from app.core.config import settings
-from app.dependencies.auth import get_current_active_user, require_admin
+from app.dependencies.auth import get_current_active_user, require_read_access
 from app.models.user import User
 from app.services.update_service import update_service
 
@@ -76,7 +76,7 @@ def _collect_host_metrics() -> dict:
 
 
 @router.get("/info")
-async def get_system_info(admin: User = Depends(require_admin)):
+async def get_system_info(admin: User = Depends(require_read_access)):
     """OS, uptime and live CPU/memory/disk of the host, plus public IP + version."""
     info = {
         "os": None, "hostname": None, "uptime_seconds": None,
@@ -150,7 +150,7 @@ _API_REFERENCE_PATH = os.path.join(
 
 
 @router.get("/api-reference", response_class=HTMLResponse, include_in_schema=False)
-async def api_reference(user: User = Depends(require_admin)):
+async def api_reference(user: User = Depends(require_read_access)):
     """Serve the curated API reference page (admin only; hidden from the sidebar)."""
     try:
         with open(_API_REFERENCE_PATH, encoding="utf-8") as f:
@@ -182,7 +182,7 @@ async def api_reference_js():
 
 
 @router.get("/update/check")
-async def check_for_update(admin: User = Depends(require_admin)):
+async def check_for_update(admin: User = Depends(require_read_access)):
     """Fetch upstream and report whether a newer version is available."""
     ok, data = await update_service.check_latest()
     if not ok:
@@ -191,7 +191,7 @@ async def check_for_update(admin: User = Depends(require_admin)):
 
 
 @router.get("/update/versions")
-async def list_update_versions(admin: User = Depends(require_admin)):
+async def list_update_versions(admin: User = Depends(require_read_access)):
     """List available version tags so the admin can update to — or roll back to —
     a specific version."""
     ok, data = await update_service.list_versions()
@@ -201,7 +201,7 @@ async def list_update_versions(admin: User = Depends(require_admin)):
 
 
 @router.post("/update")
-async def start_update(payload: UpdateRequest, admin: User = Depends(require_admin)):
+async def start_update(payload: UpdateRequest, admin: User = Depends(require_read_access)):
     """Kick off a full-system update. Returns a job id immediately; poll the
     update-agent (via `/update-agent/status`) for live progress."""
     ok, data = await update_service.start_update(
@@ -215,7 +215,7 @@ async def start_update(payload: UpdateRequest, admin: User = Depends(require_adm
 
 
 @router.get("/update/status")
-async def get_update_status(admin: User = Depends(require_admin)):
+async def get_update_status(admin: User = Depends(require_read_access)):
     """Proxied status. Prefer polling the agent directly for resilience; this is
     a convenience endpoint for when the backend is up."""
     ok, data = await update_service.get_status()
@@ -225,7 +225,7 @@ async def get_update_status(admin: User = Depends(require_admin)):
 
 
 @router.post("/openvpn/regenerate-config")
-async def regenerate_openvpn_config(admin: User = Depends(require_admin)):
+async def regenerate_openvpn_config(admin: User = Depends(require_read_access)):
     """Regenerate OpenVPN server.conf from the current template, PRESERVING all
     PKI/certs. Explicit action — updates never touch server.conf automatically."""
     ok, data = await update_service.regenerate_openvpn_config()
@@ -235,7 +235,7 @@ async def regenerate_openvpn_config(admin: User = Depends(require_admin)):
 
 
 @router.get("/backup")
-async def download_backup(admin: User = Depends(require_admin)):
+async def download_backup(admin: User = Depends(require_read_access)):
     """Create a full backup (DB dump + OpenVPN PKI + config marker) and return it as a
     downloadable .tar.gz. Name-agnostic: the DB is dumped with --no-owner --no-acl and
     the OpenVPN PKI is tarred straight from the container volume, so it restores onto a
@@ -292,7 +292,7 @@ async def download_backup(admin: User = Depends(require_admin)):
 @router.post("/restore")
 async def start_restore(
     file: UploadFile = File(...),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
 ):
     """Upload a backup .tar.gz and restore it. DESTRUCTIVE: drops the DB schema and
     recreates the stack. The restore runs on the host update-agent (detached) — poll

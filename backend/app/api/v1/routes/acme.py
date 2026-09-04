@@ -10,7 +10,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.acme_challenge import ACMEChallengeStatus
 from app.services.acme_service import ACMEService
-from app.dependencies.auth import require_admin
+from app.dependencies.auth import require_read_access
 from app.schemas.acme_challenge import (
     ACMEChallengeRequest,
     ACMEChallengeResponse,
@@ -27,7 +27,7 @@ router = APIRouter()
 @router.post("/request-dns", response_model=ACMEChallengeResponse, status_code=status.HTTP_201_CREATED)
 async def request_dns_challenge(
     data: ACMEChallengeRequest,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -58,7 +58,7 @@ async def request_dns_challenge(
 @router.post("/{challenge_id}/verify", response_model=ACMEVerifyResponse)
 async def verify_dns_challenge(
     challenge_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -96,7 +96,7 @@ async def list_challenges(
     challenge_status: str = None,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """List all ACME challenges (admin only)."""
@@ -129,7 +129,7 @@ async def list_challenges(
 @router.get("/challenges/{challenge_id}", response_model=ACMEChallengeResponse)
 async def get_challenge(
     challenge_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Get challenge details (admin only)."""
@@ -148,7 +148,7 @@ async def get_challenge(
 @router.delete("/challenges/{challenge_id}", response_model=MessageResponse)
 async def delete_challenge(
     challenge_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a challenge (admin only)."""

@@ -129,6 +129,8 @@ class UserService:
             password_hash=hash_password(data.password),
             user_type=user_type,
             is_admin=data.is_admin if user_type == UserType.HUMAN else False,
+            # Read-only is orthogonal to admin (admin wins); it applies to any user type.
+            is_readonly=data.is_readonly and not (data.is_admin if user_type == UserType.HUMAN else False),
             mfa_required=data.mfa_required if user_type == UserType.HUMAN else False,
             max_concurrent_connections=data.max_concurrent_connections,
             bandwidth_limit_mbps=data.bandwidth_limit_mbps,
@@ -177,6 +179,8 @@ class UserService:
             password_hash=hash_password(api_key),  # Use API key as password too
             user_type=UserType.SERVICE,
             is_admin=data.is_admin,
+            # Admin wins over read-only; never store both.
+            is_readonly=data.is_readonly and not data.is_admin,
             service_name=data.service_name.lower(),
             service_description=data.service_description,
             api_key_hash=key_hash,
@@ -214,6 +218,13 @@ class UserService:
             if existing and existing.id != user.id:
                 return user, "Email already exists"
             update_data["email"] = update_data["email"].lower()
+
+        # Normalize the admin/read-only pair: they are mutually exclusive and admin wins.
+        # Whichever flag the update turns on forces the other off, so stored state can't drift.
+        if update_data.get("is_admin") is True:
+            update_data["is_readonly"] = False
+        elif update_data.get("is_readonly") is True:
+            update_data["is_admin"] = False
 
         # Apply updates
         for field, value in update_data.items():

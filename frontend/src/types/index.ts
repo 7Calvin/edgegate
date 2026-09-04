@@ -7,6 +7,8 @@ export interface User {
   auth_source?: 'local' | 'ad'
   is_active: boolean
   is_admin: boolean
+  is_readonly?: boolean
+  role?: 'admin' | 'readonly' | 'user'
   mfa_enabled: boolean
   mfa_required: boolean
   max_concurrent_connections: number
@@ -32,6 +34,7 @@ export interface UserCreate {
   password: string
   user_type?: 'human' | 'service' | 'admin'
   is_admin?: boolean
+  is_readonly?: boolean
   max_concurrent_connections?: number
 }
 
@@ -39,6 +42,7 @@ export interface ServiceAccountCreate {
   service_name: string
   service_description?: string
   is_admin?: boolean
+  is_readonly?: boolean
   allowed_source_ips?: string[]
   max_concurrent_connections?: number
   bandwidth_limit_mbps?: number
@@ -53,6 +57,8 @@ export interface ServiceAccountResponse {
   user_type: 'service'
   is_active: boolean
   is_admin: boolean
+  is_readonly?: boolean
+  role?: 'admin' | 'readonly' | 'user'
   allowed_source_ips: string[]
   max_concurrent_connections: number
   bandwidth_limit_mbps?: number

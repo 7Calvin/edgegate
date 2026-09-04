@@ -59,6 +59,9 @@ class User(Base):
     )
     is_active = Column(Boolean, default=True, index=True)
     is_admin = Column(Boolean, default=False)
+    # Read-only grant, orthogonal to is_admin (admin always wins). A read-only principal
+    # may reach read endpoints (GET/HEAD/OPTIONS) but no mutation. See require_read_access.
+    is_readonly = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # MFA/2FA - OPTIONAL controlled by admin
     mfa_required = Column(Boolean, default=False, nullable=False)
@@ -148,6 +151,16 @@ class User(Base):
         return self.user_type == UserType.SERVICE
 
     @property
+    def role(self) -> str:
+        """Derived authorization tier for UI/serialization (single source of truth stays
+        the underlying booleans). Admin outranks read-only."""
+        if self.is_admin:
+            return "admin"
+        if self.is_readonly:
+            return "readonly"
+        return "user"
+
+    @property
     def is_ad_user(self) -> bool:
         """Check if this user authenticates against Active Directory"""
         return self.auth_source == AuthSource.AD
@@ -163,11 +176,11 @@ class User(Base):
     def is_subject_to_trusted_hosts(self) -> bool:
         """Trusted Hosts apply to panel/API principals only.
 
-        Admins and service accounts (API keys) are restricted by their source-IP
-        allowlist. Plain VPN users (human, non-admin) authenticate to the tunnel,
-        not the console, and are intentionally exempt.
+        Admins, service accounts (API keys) and read-only principals are restricted by
+        their source-IP allowlist. Plain VPN users (human, non-admin) authenticate to the
+        tunnel, not the console, and are intentionally exempt.
         """
-        return bool(self.is_admin or self.is_service_account)
+        return bool(self.is_admin or self.is_service_account or self.is_readonly)
 
     def is_source_ip_trusted(self, source_ip: Optional[str]) -> bool:
         """Trusted Hosts check: is ``source_ip`` allowed to authenticate as this user?

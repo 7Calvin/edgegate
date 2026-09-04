@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.user import User
 from app.models.backup_schedule import BackupSchedule
-from app.dependencies.auth import require_admin
+from app.dependencies.auth import require_read_access
 from app.schemas.backup_schedule import (
     BackupScheduleCreate,
     BackupScheduleUpdate,
@@ -44,7 +44,7 @@ def _serialize(s: BackupSchedule) -> BackupScheduleResponse:
 
 
 @router.get("", response_model=list[BackupScheduleResponse])
-async def list_backups(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+async def list_backups(admin: User = Depends(require_read_access), db: AsyncSession = Depends(get_db)):
     """List scheduled backups (admin only)."""
     return [_serialize(s) for s in await BackupScheduleService(db).list()]
 
@@ -52,7 +52,7 @@ async def list_backups(admin: User = Depends(require_admin), db: AsyncSession = 
 @router.post("", response_model=BackupScheduleResponse, status_code=status.HTTP_201_CREATED)
 async def create_backup(
     data: BackupScheduleCreate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a scheduled backup (admin only)."""
@@ -80,7 +80,7 @@ async def create_backup(
 @router.get("/{schedule_id}", response_model=BackupScheduleResponse)
 async def get_backup(
     schedule_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     s = await BackupScheduleService(db).get(schedule_id)
@@ -93,7 +93,7 @@ async def get_backup(
 async def update_backup(
     schedule_id: UUID,
     data: BackupScheduleUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     s = await BackupScheduleService(db).get(schedule_id)
@@ -114,7 +114,7 @@ async def update_backup(
 @router.delete("/{schedule_id}", response_model=MessageResponse)
 async def delete_backup(
     schedule_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     s = await BackupScheduleService(db).get(schedule_id)
@@ -128,7 +128,7 @@ async def delete_backup(
 @router.post("/{schedule_id}/run", response_model=BackupRunResponse)
 async def run_backup_now(
     schedule_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Run the backup now (admin only). Blocks until the upload finishes."""

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.db.session import get_db
 from app.models.user import User, UserType, AuthSource
 from app.services.user_service import UserService
-from app.dependencies.auth import get_current_active_user, require_admin
+from app.dependencies.auth import get_current_active_user, require_read_access
 from app.schemas.user import (
     UserCreate,
     UserUpdate,
@@ -51,7 +51,9 @@ async def update_current_user_profile(
     """
     # Remove fields that users can't change for themselves
     update_data = data.model_dump(exclude_unset=True)
-    restricted_fields = ["is_admin", "mfa_required", "is_active", "expires_at"]
+    # is_readonly is restricted too: /me is not behind require_read_access, so without this
+    # a read-only user could self-escalate via PATCH /me {"is_readonly": false}.
+    restricted_fields = ["is_admin", "is_readonly", "mfa_required", "is_active", "expires_at"]
     for field in restricted_fields:
         update_data.pop(field, None)
 
@@ -84,7 +86,7 @@ async def list_users(
     search: Optional[str] = None,
     auth_source: Optional[AuthSource] = None,
     is_admin: Optional[bool] = None,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -115,7 +117,7 @@ async def list_users(
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     data: UserCreate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new user (admin only) - also creates VPN profile automatically"""
@@ -148,7 +150,7 @@ async def create_user(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get user by ID (admin only)"""
@@ -168,7 +170,7 @@ async def get_user(
 @router.post("/{user_id}/mfa/reset", response_model=MessageResponse)
 async def reset_user_mfa(
     user_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Reset (remove) MFA on a user's account (admin only).
@@ -203,7 +205,7 @@ async def reset_user_mfa(
 async def update_user(
     user_id: UUID,
     data: UserUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Update user (admin only)"""
@@ -256,7 +258,7 @@ async def update_user(
 async def update_trusted_hosts(
     user_id: UUID,
     data: TrustedHostsUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Replace a user's Trusted Hosts (source-IP allowlist). Admin only.
@@ -293,7 +295,7 @@ async def update_trusted_hosts(
 async def delete_user(
     user_id: UUID,
     permanent: bool = Query(False, description="Permanently delete user"),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -342,7 +344,7 @@ class ResetPasswordResponse(BaseModel):
 @router.post("/{user_id}/reset-password", response_model=ResetPasswordResponse)
 async def reset_user_password(
     user_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Reset user's password (admin only) - generates a random password"""
@@ -383,7 +385,7 @@ async def reset_user_password(
 @router.post("/service-accounts", response_model=ServiceAccountResponse, status_code=status.HTTP_201_CREATED)
 async def create_service_account(
     data: ServiceAccountCreate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -411,7 +413,7 @@ async def create_service_account(
 @router.post("/service-accounts/{user_id}/regenerate-key", response_model=APIKeyResponse)
 async def regenerate_service_account_key(
     user_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -455,7 +457,7 @@ async def regenerate_service_account_key(
 
 @router.get("/stats/summary")
 async def get_user_stats(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get user statistics (admin only)"""

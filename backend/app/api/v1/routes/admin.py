@@ -10,7 +10,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.ldap_settings import LdapSettings
 from app.models.nat_gateway_settings import NatGatewaySettings
-from app.dependencies.auth import require_admin
+from app.dependencies.auth import require_read_access
 from app.schemas.nat_gateway import NatGatewayUpdate, NatGatewayResponse
 from app.schemas.common import MessageResponse
 from app.schemas.ldap import (
@@ -45,7 +45,7 @@ def _ldap_to_response(cfg: Optional[LdapSettings]) -> LdapSettingsResponse:
 
 @router.get("/dashboard")
 async def get_admin_dashboard(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get admin dashboard summary"""
@@ -63,7 +63,7 @@ async def get_admin_dashboard(
 
 @router.get("/audit-logs")
 async def get_audit_logs(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
     page: int = 1,
     page_size: int = 50,
@@ -122,7 +122,7 @@ async def get_audit_logs(
 
 @router.get("/system/health")
 async def get_system_health(
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_read_access)
 ):
     """Get system health status"""
     # TODO: Implement comprehensive health check
@@ -139,7 +139,7 @@ async def get_system_health(
 
 @router.get("/system/config")
 async def get_system_config(
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_read_access)
 ):
     """Get current system configuration (sanitized)"""
     from app.core.config import settings
@@ -173,7 +173,7 @@ async def get_system_config(
 @router.post("/system/maintenance")
 async def toggle_maintenance_mode(
     enabled: bool,
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_read_access)
 ):
     """Toggle maintenance mode (admin only)"""
     # TODO: Implement maintenance mode
@@ -182,7 +182,7 @@ async def toggle_maintenance_mode(
 
 @router.get("/ip-pools")
 async def list_ip_pools(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """List IP address pools"""
@@ -192,7 +192,7 @@ async def list_ip_pools(
 
 @router.post("/ip-pools")
 async def create_ip_pool(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new IP pool"""
@@ -202,7 +202,7 @@ async def create_ip_pool(
 
 @router.get("/network-routes")
 async def list_network_routes(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """List network routes"""
@@ -212,7 +212,7 @@ async def list_network_routes(
 
 @router.post("/backup")
 async def create_backup(
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_read_access)
 ):
     """Create system backup"""
     # TODO: Implement backup functionality
@@ -221,7 +221,7 @@ async def create_backup(
 
 @router.get("/backups")
 async def list_backups(
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_read_access)
 ):
     """List available backups"""
     # TODO: Implement backup listing
@@ -232,7 +232,7 @@ async def list_backups(
 
 @router.get("/ldap-settings", response_model=LdapSettingsResponse)
 async def get_ldap_settings(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Return the current LDAP/AD configuration (bind password never exposed)."""
@@ -245,7 +245,7 @@ async def get_ldap_settings(
 @router.put("/ldap-settings", response_model=LdapSettingsResponse)
 async def update_ldap_settings(
     data: LdapSettingsUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Create or update the single LDAP/AD settings row (admin-only)."""
@@ -278,7 +278,7 @@ async def update_ldap_settings(
 @router.post("/ldap-settings/test", response_model=LdapTestResponse)
 async def test_ldap_settings(
     data: LdapTestRequest,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Validate a candidate LDAP config (service-account bind + base search)."""
@@ -309,7 +309,7 @@ async def test_ldap_settings(
 async def sync_ldap_group(
     delete_mode: str = "deactivate",
     dry_run: bool = False,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Mirror the AD group's members into local shadow users (admin-only).
@@ -374,7 +374,7 @@ def _nat_gateway_to_response(cfg, auto_excludes=None, applied=None, agent_messag
 
 @router.get("/nat-gateway", response_model=NatGatewayResponse)
 async def get_nat_gateway(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Return the host-as-NAT-gateway config (DB row, or env defaults if unset)."""
@@ -387,7 +387,7 @@ async def get_nat_gateway(
 @router.put("/nat-gateway", response_model=NatGatewayResponse)
 async def update_nat_gateway(
     data: NatGatewayUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Save the NAT gateway config and ask the agent to (re)apply it (admin-only)."""

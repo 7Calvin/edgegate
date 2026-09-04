@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.user import User
 from app.services.firewall_service import FirewallService
-from app.dependencies.auth import get_current_active_user, require_admin
+from app.dependencies.auth import get_current_active_user, require_read_access
 from app.schemas.firewall import (
     FirewallRuleCreate,
     FirewallRuleUpdate,
@@ -172,7 +172,7 @@ async def list_firewall_rules(
     include_global: bool = Query(True, description="Include global rules"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -202,7 +202,7 @@ async def list_firewall_rules(
 @router.post("/rules", response_model=FirewallRuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_firewall_rule(
     data: FirewallRuleCreate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new firewall rule (admin only)"""
@@ -222,7 +222,7 @@ async def create_firewall_rule(
 @router.get("/rules/{rule_id}", response_model=FirewallRuleResponse)
 async def get_firewall_rule(
     rule_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get firewall rule details (admin only)"""
@@ -243,7 +243,7 @@ async def get_firewall_rule(
 async def update_firewall_rule(
     rule_id: UUID,
     data: FirewallRuleUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Update firewall rule (admin only)"""
@@ -271,7 +271,7 @@ async def update_firewall_rule(
 @router.delete("/rules/{rule_id}", response_model=MessageResponse)
 async def delete_firewall_rule(
     rule_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete firewall rule (admin only)"""
@@ -298,7 +298,7 @@ async def delete_firewall_rule(
 
 @router.post("/apply", response_model=MessageResponse)
 async def apply_firewall_rules(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -322,7 +322,7 @@ async def apply_firewall_rules(
 
 @router.get("/config", response_class=PlainTextResponse)
 async def get_firewall_config(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -340,7 +340,7 @@ async def get_firewall_config(
 
 @router.get("/status", response_model=FirewallStatus)
 async def get_firewall_status(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get current firewall status (admin only)"""
@@ -353,7 +353,7 @@ async def get_firewall_status(
 
 @router.post("/init-defaults", response_model=MessageResponse)
 async def initialize_default_rules(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -392,7 +392,7 @@ async def get_my_firewall_rules(
 
 @router.get("/quick-rules")
 async def get_quick_rules_status(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get status of all quick rules (admin only)"""
@@ -432,7 +432,7 @@ async def get_quick_rules_status(
 async def toggle_quick_rule(
     rule_key: str,
     body: Optional[QuickRuleToggleRequest] = None,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -537,7 +537,7 @@ async def toggle_quick_rule(
 async def set_quick_rule_networks(
     rule_key: str,
     data: QuickRuleNetworks,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -581,7 +581,7 @@ async def set_quick_rule_networks(
 
 @router.get("/nat", response_model=list[NATRuleResponse])
 async def list_nat_rules(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """List all NAT rules (admin only)"""
@@ -599,7 +599,7 @@ async def list_nat_rules(
 @router.post("/nat", response_model=NATRuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_nat_rule(
     data: NATRuleCreate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new NAT rule (admin only)"""
@@ -665,7 +665,7 @@ async def create_nat_rule(
 @router.get("/nat/{rule_id}", response_model=NATRuleResponse)
 async def get_nat_rule(
     rule_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Get NAT rule details (admin only)"""
@@ -690,7 +690,7 @@ async def get_nat_rule(
 async def update_nat_rule(
     rule_id: UUID,
     data: NATRuleUpdate,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Update NAT rule (admin only)"""
@@ -750,7 +750,7 @@ async def update_nat_rule(
 
 @router.post("/nat/apply", response_model=MessageResponse)
 async def apply_nat_rules(
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
 ):
     """Manually apply all NAT rules via NAT agent (admin only)"""
     result = await apply_nat_rules_via_agent()
@@ -770,7 +770,7 @@ async def apply_nat_rules(
 @router.delete("/nat/{rule_id}", response_model=MessageResponse)
 async def delete_nat_rule(
     rule_id: UUID,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_read_access),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete NAT rule (admin only)"""

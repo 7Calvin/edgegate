@@ -131,11 +131,12 @@ export const usersApi = {
     password: string
     user_type?: 'human' | 'service'
     is_admin?: boolean
+    is_readonly?: boolean
     description?: string
     allowed_source_ips?: string[]
   }) => api.post('/users', data),
 
-  update: (id: string, data: Partial<{ email: string; is_active: boolean; is_admin: boolean }>) =>
+  update: (id: string, data: Partial<{ email: string; is_active: boolean; is_admin: boolean; is_readonly: boolean }>) =>
     api.patch(`/users/${id}`, data),
 
   // Trusted Hosts: replace the source IP/CIDR allowlist for an admin or service
@@ -157,6 +158,7 @@ export const usersApi = {
     service_name: string
     service_description?: string
     is_admin?: boolean
+    is_readonly?: boolean
     allowed_source_ips?: string[]
     expires_at?: string
   }) => api.post('/users/service-accounts', data),

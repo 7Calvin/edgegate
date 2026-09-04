@@ -47,7 +47,7 @@ export default function LoginPage() {
     setIsLoading(true)
     try {
       const response = await authApi.login(data.username, data.password, data.mfaCode)
-      const { access_token, user_id, username, is_admin, mfa_enabled, mfa_required, mfa_pending } = response.data
+      const { access_token, user_id, username, is_admin, is_readonly, role, mfa_enabled, mfa_required, mfa_pending } = response.data
 
       // Build user object from flat response fields
       // The full user object will be fetched by checkAuth() if needed
@@ -55,6 +55,8 @@ export default function LoginPage() {
         id: user_id,
         username,
         is_admin,
+        is_readonly: is_readonly ?? false,
+        role: role ?? (is_admin ? 'admin' : is_readonly ? 'readonly' : 'user'),
         mfa_enabled: mfa_enabled ?? false,
         mfa_required: mfa_required ?? false,
         email: '',
