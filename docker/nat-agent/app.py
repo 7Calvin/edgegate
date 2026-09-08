@@ -40,6 +40,9 @@ NAT_GATEWAY_EXCLUDE = os.environ.get('NAT_GATEWAY_EXCLUDE', '').strip()
 # iptables comment used to tag (and later identify/remove) gateway-NAT rules.
 GW_NAT_COMMENT = 'vpn-gw-nat'
 
+# iptables comment tagging the site-to-site IPsec forward-allow rules.
+IPSEC_FWD_COMMENT = 'vpn-ipsec-fwd'
+
 
 def get_db_connection():
     """Get database connection"""
@@ -276,6 +279,66 @@ def apply_gateway_nat():
     logger.info(f"Gateway NAT applied: {net} -> {iface} (masquerade)")
 
 
+def _clear_forward_by_comment(comment):
+    """Delete all FORWARD rules tagged with the given iptables comment (idempotent)."""
+    while True:
+        result = subprocess.run(
+            ['iptables', '-L', 'FORWARD', '--line-numbers', '-n'],
+            capture_output=True, text=True
+        )
+        deleted = False
+        for line in reversed(result.stdout.splitlines()):
+            if comment in line:
+                num = line.split()[0]
+                if num.isdigit():
+                    run_iptables(['-D', 'FORWARD', num], check=False)
+                    deleted = True
+                    break
+        if not deleted:
+            break
+
+
+def apply_ipsec_forwarding():
+    """Allow forwarding both ways between the local and remote subnets of every
+    enabled IPsec tunnel.
+
+    Site-to-site traffic (e.g. an on-prem host resolving names on the VPC's AD) is
+    plain routed traffic with no NAT, and gets dropped when the host FORWARD policy
+    is restrictive (UFW 'deny (routed)'). The gateway-NAT logic only links the NAT
+    gateway network to IPsec remote subnets and never covers the local subnet, so
+    without this the tunnel comes up but LAN-to-LAN traffic silently fails.
+    Idempotent: clears its own tagged rules first. Rules are inserted at the top of
+    FORWARD so the ACCEPT wins over the policy DROP regardless of UFW/Docker order."""
+    _clear_forward_by_comment(IPSEC_FWD_COMMENT)
+    pairs = []
+    try:
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT left_subnet, right_subnet FROM ipsec_connections "
+                "WHERE is_enabled = true"
+            )
+            for r in cur.fetchall():
+                lefts = [s.strip() for s in (r.get('left_subnet') or '').split(',') if s.strip()]
+                rights = [s.strip() for s in (r.get('right_subnet') or '').split(',') if s.strip()]
+                for a in lefts:
+                    for b in rights:
+                        pairs.append((a, b))
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.info(f"IPsec forwarding read failed ({e})")
+        return
+
+    tag = ['-m', 'comment', '--comment', IPSEC_FWD_COMMENT]
+    for a, b in pairs:
+        run_iptables(['-I', 'FORWARD', '1', '-s', b, '-d', a, '-j', 'ACCEPT'] + tag, check=False)
+        run_iptables(['-I', 'FORWARD', '1', '-s', a, '-d', b, '-j', 'ACCEPT'] + tag, check=False)
+    if pairs:
+        logger.info(f"IPsec forwarding applied for pairs: {pairs}")
+
+
 def apply_nat_rules():
     """Apply NAT rules from database"""
     try:
@@ -299,6 +362,8 @@ def apply_nat_rules():
 
         # Re-assert the gateway NAT (private subnet -> internet) alongside DNAT rules
         apply_gateway_nat()
+        # Ensure site-to-site IPsec LAN-to-LAN forwarding is allowed (any UFW policy)
+        apply_ipsec_forwarding()
 
         # Create VPN_RULES chain if not exists (for firewall status detection)
         subprocess.run(['iptables', '-N', 'VPN_RULES'], capture_output=True)
@@ -470,6 +535,7 @@ def gateway_apply():
         return jsonify({'error': 'Unauthorized'}), 401
     try:
         apply_gateway_nat()
+        apply_ipsec_forwarding()
         net, iface, excl = get_gateway_config()
         return jsonify({
             'success': True, 'network': net, 'interface': iface, 'exclude': excl,
