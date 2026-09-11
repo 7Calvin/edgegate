@@ -7,13 +7,23 @@ export interface ThroughputPoint {
   bytes_received: number // entrada (clients -> server)
 }
 
-const PAD = { l: 8, r: 8, t: 14, b: 22 }
+const PAD = { l: 8, r: 8, t: 16, b: 22 }
 const H = 240
+
+const OUT_COLOR = 'hsl(188 84% 53%)'
+const IN_COLOR = 'hsl(255 100% 68%)'
+const PEAK_COLOR = 'hsl(38 92% 60%)' // amber — the ceiling actually reached
+const AVG_COLOR = 'hsl(210 40% 60%)' // muted — the baseline
 
 function hhmm(ts: string): string {
   const d = new Date(ts)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+function mean(arr: number[]): number {
+  if (arr.length === 0) return 0
+  return arr.reduce((a, b) => a + b, 0) / arr.length
 }
 
 export function ThroughputChart({ points }: { points: ThroughputPoint[] }) {
@@ -32,6 +42,16 @@ export function ThroughputChart({ points }: { points: ThroughputPoint[] }) {
   const OUT = useMemo(() => points.map((p) => p.bytes_sent), [points])
   const IN = useMemo(() => points.map((p) => p.bytes_received), [points])
   const HOURS = useMemo(() => points.map((p) => hhmm(p.timestamp)), [points])
+
+  // Reference stats. Peak marks the ceiling hit in the window; média the
+  // baseline. Computed per direction so the caption can show both, but only the
+  // saída (primary) reference lines are drawn to keep the plot readable.
+  const stats = useMemo(() => ({
+    peakOut: OUT.length ? Math.max(...OUT) : 0,
+    avgOut: mean(OUT),
+    peakIn: IN.length ? Math.max(...IN) : 0,
+    avgIn: mean(IN),
+  }), [OUT, IN])
 
   const { outLine, outArea, inLine, xs, max, labelIdx } = useMemo(() => {
     const n = OUT.length
@@ -58,12 +78,17 @@ export function ThroughputChart({ points }: { points: ThroughputPoint[] }) {
   if (OUT.length < 2) {
     return (
       <div ref={wrapRef} className="w-full">
-        <div className="flex items-center justify-center text-center text-sm text-muted-foreground" style={{ height: H }}>
-          Coletando dados de throughput… o gráfico aparece após as primeiras amostras.
+        <div className="flex items-center justify-center px-4 text-center text-sm text-muted-foreground" style={{ height: H }}>
+          Aguardando amostras… o gráfico aparece assim que houver ao menos duas leituras neste intervalo (uma a cada ciclo de amostragem).
         </div>
       </div>
     )
   }
+
+  const peakY = y(stats.peakOut)
+  const avgY = y(stats.avgOut)
+  // Nudge labels so peak/média text never collides when the two lines are close.
+  const avgLabelBelow = Math.abs(avgY - peakY) < 14
 
   return (
     <div ref={wrapRef} className="w-full">
@@ -83,8 +108,8 @@ export function ThroughputChart({ points }: { points: ThroughputPoint[] }) {
       >
         <defs>
           <linearGradient id="egOut" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(188 84% 53%)" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="hsl(188 84% 53%)" stopOpacity="0" />
+            <stop offset="0%" stopColor={OUT_COLOR} stopOpacity="0.35" />
+            <stop offset="100%" stopColor={OUT_COLOR} stopOpacity="0" />
           </linearGradient>
         </defs>
 
@@ -95,8 +120,26 @@ export function ThroughputChart({ points }: { points: ThroughputPoint[] }) {
 
         {/* area + lines */}
         <path d={outArea} fill="url(#egOut)" />
-        <path d={outLine} fill="none" stroke="hsl(188 84% 53%)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-        <path d={inLine} fill="none" stroke="hsl(255 100% 68%)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={outLine} fill="none" stroke={OUT_COLOR} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={inLine} fill="none" stroke={IN_COLOR} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+
+        {/* reference lines: peak + average of saída (primary series) */}
+        {stats.peakOut > 0 && (
+          <g>
+            <line x1={PAD.l} x2={w - PAD.r} y1={peakY} y2={peakY} stroke={PEAK_COLOR} strokeWidth="1" strokeDasharray="5 3" opacity="0.8" />
+            <text x={w - PAD.r} y={peakY - 3} textAnchor="end" style={{ fontSize: 10, fill: PEAK_COLOR }}>
+              pico {formatBytes(stats.peakOut)}
+            </text>
+          </g>
+        )}
+        {stats.avgOut > 0 && (
+          <g>
+            <line x1={PAD.l} x2={w - PAD.r} y1={avgY} y2={avgY} stroke={AVG_COLOR} strokeWidth="1" strokeDasharray="2 3" opacity="0.7" />
+            <text x={w - PAD.r} y={avgLabelBelow ? avgY + 11 : avgY - 3} textAnchor="end" style={{ fontSize: 10, fill: AVG_COLOR }}>
+              méd {formatBytes(stats.avgOut)}
+            </text>
+          </g>
+        )}
 
         {/* x labels */}
         {labelIdx.map((i) => (
@@ -107,20 +150,39 @@ export function ThroughputChart({ points }: { points: ThroughputPoint[] }) {
         {hover !== null && (
           <g>
             <line x1={xs[hover]} x2={xs[hover]} y1={PAD.t} y2={H - PAD.b} stroke="hsl(210 45% 24%)" strokeWidth="1" />
-            <circle cx={xs[hover]} cy={y(OUT[hover])} r="3.5" fill="hsl(188 84% 53%)" stroke="hsl(218 42% 9%)" strokeWidth="2" />
-            <circle cx={xs[hover]} cy={y(IN[hover])} r="3.5" fill="hsl(255 100% 68%)" stroke="hsl(218 42% 9%)" strokeWidth="2" />
+            <circle cx={xs[hover]} cy={y(OUT[hover])} r="3.5" fill={OUT_COLOR} stroke="hsl(218 42% 9%)" strokeWidth="2" />
+            <circle cx={xs[hover]} cy={y(IN[hover])} r="3.5" fill={IN_COLOR} stroke="hsl(218 42% 9%)" strokeWidth="2" />
           </g>
         )}
       </svg>
 
-      {/* tooltip */}
-      {hover !== null && (
-        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-          <span className="text-muted-foreground">{HOURS[hover]}</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full" style={{ background: 'hsl(188 84% 53%)' }} /><span className="text-muted-foreground">saída</span> <span className="font-medium text-foreground">{formatBytes(OUT[hover])}</span></span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full" style={{ background: 'hsl(255 100% 68%)' }} /><span className="text-muted-foreground">entrada</span> <span className="font-medium text-foreground">{formatBytes(IN[hover])}</span></span>
-        </div>
-      )}
+      {/* stats caption — peak/average per direction, always visible */}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: OUT_COLOR }} />saída
+          <span className="text-foreground">pico {formatBytes(stats.peakOut)}</span>
+          <span className="text-muted-foreground/70">·</span>
+          <span className="text-foreground">méd {formatBytes(stats.avgOut)}</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: IN_COLOR }} />entrada
+          <span className="text-foreground">pico {formatBytes(stats.peakIn)}</span>
+          <span className="text-muted-foreground/70">·</span>
+          <span className="text-foreground">méd {formatBytes(stats.avgIn)}</span>
+        </span>
+      </div>
+
+      {/* tooltip — fixed-height slot reserved always, so hovering never resizes
+          the card / shifts the page. Content only fills in on hover. */}
+      <div className="mt-1 flex min-h-[1.25rem] flex-wrap items-center gap-x-4 gap-y-1 text-xs" aria-live="polite">
+        {hover !== null && (
+          <>
+            <span className="text-muted-foreground">{HOURS[hover]}</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full" style={{ background: OUT_COLOR }} /><span className="text-muted-foreground">saída</span> <span className="font-medium text-foreground">{formatBytes(OUT[hover])}</span></span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full" style={{ background: IN_COLOR }} /><span className="text-muted-foreground">entrada</span> <span className="font-medium text-foreground">{formatBytes(IN[hover])}</span></span>
+          </>
+        )}
+      </div>
     </div>
   )
 }

@@ -102,7 +102,9 @@ class ThroughputResponse(BaseModel):
     """Throughput time-series for the dashboard chart"""
     window: str  # 1h, 6h, 24h, 7d
     source: str = "openvpn"  # openvpn | ipsec | total
+    tunnel: str = "all"      # IPsec only: selected tunnel name, or "all" (aggregate)
     points: List[ThroughputPoint]
+    tunnels: List[str] = []  # IPsec only: tunnel names seen in the window, for the selector
 
 
 class UserConnectionStats(BaseModel):

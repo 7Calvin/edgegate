@@ -321,8 +321,14 @@ export const connectionsApi = {
 
   bandwidth: () => api.get('/connections/stats/bandwidth'),
 
-  throughput: (window: '1h' | '6h' | '24h' | '7d' = '24h', source: 'openvpn' | 'ipsec' | 'total' = 'openvpn') =>
-    api.get('/connections/throughput', { params: { window, source } }),
+  throughput: (
+    window: '1h' | '6h' | '24h' | '7d' = '24h',
+    source: 'openvpn' | 'ipsec' | 'total' = 'openvpn',
+    tunnel?: string,
+  ) =>
+    api.get('/connections/throughput', {
+      params: { window, source, ...(tunnel && tunnel !== 'all' ? { tunnel } : {}) },
+    }),
 
   userStats: (userId: string) => api.get(`/connections/stats/user/${userId}`),
 

@@ -582,30 +582,58 @@ class ConnectionService:
         connections: List[dict],
         recorded_at: Optional[datetime] = None,
     ) -> BandwidthSample:
-        """Snapshot cumulative IPsec byte counters, summed across all tunnels.
+        """Snapshot cumulative IPsec byte counters — one aggregate row plus one
+        row per tunnel.
 
         ``connections`` is the list from ``IPsecService.get_status()`` — each
         entry carries per-child-SA ``bytes_in`` / ``bytes_out`` parsed from
-        StrongSwan. Note StrongSwan resets these on rekey; the throughput query
-        clamps negative deltas to 0, same as OpenVPN counter resets.
+        StrongSwan (already summed per connection ``name``). Note StrongSwan
+        resets these on rekey; the throughput query clamps negative deltas to 0,
+        same as OpenVPN counter resets.
 
         Direction is normalised to the OpenVPN convention used by the chart:
           bytes_sent     = server -> peers  (StrongSwan bytes_out)
           bytes_received = peers  -> server (StrongSwan bytes_in)
+
+        The aggregate row (``tunnel_name`` NULL) backs the "Todos" view and the
+        "total" series; the per-tunnel rows back the dashboard's tunnel selector.
+        Returns the aggregate row (per-tunnel rows are added to the session too).
         """
         cum_sent = sum(int(c.get("bytes_out") or 0) for c in connections)
         cum_received = sum(int(c.get("bytes_in") or 0) for c in connections)
         active = sum(1 for c in connections if c.get("tunnel_status") == "UP")
 
-        sample = BandwidthSample(
+        ts_kwargs = {"recorded_at": recorded_at} if recorded_at is not None else {}
+
+        aggregate = BandwidthSample(
             cum_bytes_sent=cum_sent,
             cum_bytes_received=cum_received,
             active_clients=active,
             source="ipsec",
-            **({"recorded_at": recorded_at} if recorded_at is not None else {}),
+            tunnel_name=None,
+            **ts_kwargs,
         )
-        self.db.add(sample)
-        return sample
+        self.db.add(aggregate)
+
+        # One row per tunnel so the chart can isolate a single tunnel over time.
+        # A tunnel with no counters yet (never established) is skipped — it would
+        # only add a flat zero line and clutter the selector.
+        for c in connections:
+            name = c.get("name")
+            if not name:
+                continue
+            self.db.add(
+                BandwidthSample(
+                    cum_bytes_sent=int(c.get("bytes_out") or 0),
+                    cum_bytes_received=int(c.get("bytes_in") or 0),
+                    active_clients=1 if c.get("tunnel_status") == "UP" else 0,
+                    source="ipsec",
+                    tunnel_name=name,
+                    **ts_kwargs,
+                )
+            )
+
+        return aggregate
 
     async def prune_bandwidth_samples(self, retention_hours: int) -> int:
         """Delete bandwidth samples older than the retention window."""
@@ -659,7 +687,9 @@ class ConnectionService:
 
         return count
 
-    async def get_throughput(self, window: str = "24h", source: str = "openvpn") -> dict:
+    async def get_throughput(
+        self, window: str = "24h", source: str = "openvpn", tunnel: Optional[str] = None
+    ) -> dict:
         """Build the throughput time-series for the dashboard chart.
 
         Returns one point per sampling interval, where each point's bytes are
@@ -669,6 +699,11 @@ class ConnectionService:
 
         ``source`` selects the technology: "openvpn", "ipsec", or "total" (the
         per-timestamp sum of both — samples share a recorded_at within a tick).
+
+        ``tunnel`` applies only to IPsec: a StrongSwan connection name isolates
+        that tunnel's own series; None (or "all") returns the all-tunnels
+        aggregate. The response also lists the tunnels seen in the window so the
+        dashboard can populate its selector.
         """
         window_map = {
             "1h": timedelta(hours=1),
@@ -678,11 +713,18 @@ class ConnectionService:
         }
         start_time = datetime.now(timezone.utc) - window_map.get(window, timedelta(hours=24))
 
-        async def series_for(src: str) -> list[dict]:
+        async def series_for(src: str, tunnel_name: Optional[str] = None) -> list[dict]:
+            conds = [BandwidthSample.recorded_at >= start_time, BandwidthSample.source == src]
+            if src == "ipsec":
+                # A specific tunnel, or the aggregate row (tunnel_name IS NULL).
+                # Never leave this unconstrained: summing the aggregate together
+                # with the per-tunnel rows written at the same tick double-counts.
+                if tunnel_name:
+                    conds.append(BandwidthSample.tunnel_name == tunnel_name)
+                else:
+                    conds.append(BandwidthSample.tunnel_name.is_(None))
             result = await self.db.execute(
-                select(BandwidthSample)
-                .where(BandwidthSample.recorded_at >= start_time, BandwidthSample.source == src)
-                .order_by(BandwidthSample.recorded_at.asc())
+                select(BandwidthSample).where(*conds).order_by(BandwidthSample.recorded_at.asc())
             )
             samples = result.scalars().all()
             pts = []
@@ -699,6 +741,20 @@ class ConnectionService:
                 prev = s
             return pts
 
+        tunnels: list[str] = []
+        if source == "ipsec":
+            trows = await self.db.execute(
+                select(BandwidthSample.tunnel_name)
+                .where(
+                    BandwidthSample.recorded_at >= start_time,
+                    BandwidthSample.source == "ipsec",
+                    BandwidthSample.tunnel_name.is_not(None),
+                )
+                .distinct()
+                .order_by(BandwidthSample.tunnel_name.asc())
+            )
+            tunnels = [r[0] for r in trows.all() if r[0]]
+
         if source == "total":
             merged: dict = {}
             for src in ("openvpn", "ipsec"):
@@ -708,10 +764,13 @@ class ConnectionService:
                     agg["bytes_sent"] += p["bytes_sent"]
                     agg["bytes_received"] += p["bytes_received"]
             points = [merged[k] for k in sorted(merged.keys())]
+        elif source == "ipsec":
+            sel = tunnel if (tunnel and tunnel != "all") else None
+            points = await series_for("ipsec", tunnel_name=sel)
         else:
-            points = await series_for(source if source in ("openvpn", "ipsec") else "openvpn")
+            points = await series_for("openvpn")
 
-        return {"window": window, "source": source, "points": points}
+        return {"window": window, "source": source, "tunnel": tunnel or "all", "points": points, "tunnels": tunnels}
 
     async def get_user_stats(self, user_id: UUID) -> dict:
         """Get statistics for a specific user"""

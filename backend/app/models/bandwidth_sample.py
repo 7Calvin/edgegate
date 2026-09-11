@@ -41,5 +41,13 @@ class BandwidthSample(Base):
     # Which technology this snapshot measures: "openvpn" or "ipsec".
     source = Column(String(16), default="openvpn", server_default="openvpn", nullable=False, index=True)
 
+    # Per-tunnel breakdown, IPsec only. NULL marks the technology-wide aggregate
+    # row (all tunnels summed) that backs the "Todos" view and the "total"
+    # series; a non-NULL value is the StrongSwan connection name for one tunnel's
+    # own time-series. OpenVPN rows are always NULL. Querying the aggregate MUST
+    # filter tunnel_name IS NULL, otherwise the per-tunnel rows written at the
+    # same tick double-count the total.
+    tunnel_name = Column(String(255), nullable=True)
+
     def __repr__(self):
-        return f"<BandwidthSample {self.recorded_at} clients={self.active_clients}>"
+        return f"<BandwidthSample {self.recorded_at} src={self.source} tunnel={self.tunnel_name} clients={self.active_clients}>"

@@ -217,6 +217,7 @@ async def get_my_active_connections(
 async def get_throughput(
     window: str = Query("24h", pattern="^(1h|6h|24h|7d)$"),
     source: str = Query("openvpn", pattern="^(openvpn|ipsec|total)$"),
+    tunnel: str | None = Query(None, max_length=255),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -224,11 +225,13 @@ async def get_throughput(
 
     Each point is the traffic transferred during one sampling interval,
     computed from periodic snapshots of the server-wide byte counters.
-    ``source`` picks the technology: openvpn | ipsec | total.
+    ``source`` picks the technology: openvpn | ipsec | total. ``tunnel`` applies
+    only to IPsec — a StrongSwan connection name isolates that tunnel, and the
+    response's ``tunnels`` lists the names available for the selector.
     """
     connection_service = ConnectionService(db)
 
-    data = await connection_service.get_throughput(window=window, source=source)
+    data = await connection_service.get_throughput(window=window, source=source, tunnel=tunnel)
 
     return ThroughputResponse(**data)
 

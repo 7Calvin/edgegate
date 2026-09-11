@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { connectionsApi, usersApi, vpnApi, ipsecApi, proxyApi, adminApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { Link } from 'react-router-dom'
@@ -38,9 +38,11 @@ export default function DashboardPage() {
   const { data: userStats } = useQuery({ queryKey: ['user-stats'], queryFn: () => usersApi.stats().then((r) => r.data), enabled: isAdmin })
   const { data: vpnStatus } = useQuery({ queryKey: ['vpn-status'], queryFn: () => vpnApi.serverStatus().then((r) => r.data), refetchInterval: 30000, enabled: isAdmin })
   const { data: ipsecStatus } = useQuery({ queryKey: ['ipsec-status'], queryFn: () => ipsecApi.status().then((r) => r.data), refetchInterval: 15000, enabled: isAdmin })
-  const [twWindow, setTwWindow] = useState<TwWindow>('24h')
-  const { data: tpOvpn } = useQuery({ queryKey: ['throughput', twWindow, 'openvpn'], queryFn: () => connectionsApi.throughput(twWindow, 'openvpn').then((r) => r.data), refetchInterval: 60000, enabled: isAdmin })
-  const { data: tpIpsec } = useQuery({ queryKey: ['throughput', twWindow, 'ipsec'], queryFn: () => connectionsApi.throughput(twWindow, 'ipsec').then((r) => r.data), refetchInterval: 60000, enabled: isAdmin })
+  const [twOvpn, setTwOvpn] = useState<TwWindow>('24h')
+  const [twIpsec, setTwIpsec] = useState<TwWindow>('24h')
+  const [ipsecTunnel, setIpsecTunnel] = useState<string>('all')
+  const { data: tpOvpn } = useQuery({ queryKey: ['throughput', twOvpn, 'openvpn'], queryFn: () => connectionsApi.throughput(twOvpn, 'openvpn').then((r) => r.data), refetchInterval: 60000, placeholderData: keepPreviousData, enabled: isAdmin })
+  const { data: tpIpsec } = useQuery({ queryKey: ['throughput', twIpsec, 'ipsec', ipsecTunnel], queryFn: () => connectionsApi.throughput(twIpsec, 'ipsec', ipsecTunnel).then((r) => r.data), refetchInterval: 60000, placeholderData: keepPreviousData, enabled: isAdmin })
   const { data: ldap } = useQuery({ queryKey: ['ldap-settings-summary'], queryFn: () => adminApi.getLdapSettings().then((r) => r.data).catch(() => null), enabled: isAdmin })
 
   const { data: myProfile } = useQuery({ queryKey: ['my-vpn-profile'], queryFn: () => vpnApi.getProfile().then((r) => r.data).catch(() => null), enabled: !isAdmin })
@@ -83,37 +85,32 @@ export default function DashboardPage() {
         </div>
 
         <Card>
-          <CardHeader className="flex-row flex-wrap items-center justify-between gap-3 space-y-0 p-4 pb-3">
+          <CardHeader className="p-4 pb-3">
             <CardTitle className="flex items-center gap-2 text-base"><ArrowUpDown className="h-4 w-4 text-primary" /> Throughput</CardTitle>
-            <div className="flex items-center gap-3">
-              <div className="hidden items-center gap-4 text-xs text-muted-foreground sm:flex">
-                <span className="inline-flex items-center gap-1.5"><span className="h-1 w-4 rounded-full" style={{ background: 'hsl(188 84% 53%)' }} /> saída</span>
-                <span className="inline-flex items-center gap-1.5"><span className="h-1 w-4 rounded-full" style={{ background: 'hsl(255 100% 68%)' }} /> entrada</span>
-              </div>
-              <div className="flex items-center rounded-lg border border-border bg-secondary/40 p-0.5">
-                {(['1h', '6h', '24h', '7d'] as TwWindow[]).map((w) => (
-                  <button
-                    key={w}
-                    onClick={() => setTwWindow(w)}
-                    className={cn(
-                      'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                      twWindow === w ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    {TW_LABEL[w]}
-                  </button>
-                ))}
-              </div>
-            </div>
           </CardHeader>
           <CardContent className="p-4 pt-0">
             <div className="grid gap-6 lg:grid-cols-2 lg:gap-0">
+              {/* OpenVPN */}
               <div className="lg:pr-6">
-                <div className="mb-2 flex items-center gap-2 border-b border-border/60 pb-2 text-sm font-medium text-foreground"><Shield className="h-4 w-4 text-primary" /> OpenVPN</div>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Shield className="h-4 w-4 text-primary" /> OpenVPN</div>
+                  <TimeWindowSelector value={twOvpn} onChange={setTwOvpn} />
+                </div>
                 <ThroughputChart points={tpOvpn?.points ?? []} />
               </div>
+              {/* IPsec */}
               <div className="mt-4 border-t border-border pt-4 lg:mt-0 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-                <div className="mb-2 flex items-center gap-2 border-b border-border/60 pb-2 text-sm font-medium text-foreground"><Lock className="h-4 w-4 text-primary" /> IPsec</div>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Lock className="h-4 w-4 text-primary" /> IPsec</div>
+                  <div className="flex items-center gap-2">
+                    <TunnelSelector
+                      value={ipsecTunnel}
+                      tunnels={tpIpsec?.tunnels ?? []}
+                      onChange={setIpsecTunnel}
+                    />
+                    <TimeWindowSelector value={twIpsec} onChange={setTwIpsec} />
+                  </div>
+                </div>
                 <ThroughputChart points={tpIpsec?.points ?? []} />
               </div>
             </div>
@@ -283,6 +280,45 @@ export default function DashboardPage() {
         </Card>
       )}
     </div>
+  )
+}
+
+function TimeWindowSelector({ value, onChange }: { value: TwWindow; onChange: (w: TwWindow) => void }) {
+  return (
+    <div className="flex items-center rounded-lg border border-border bg-secondary/40 p-0.5">
+      {(['1h', '6h', '24h', '7d'] as TwWindow[]).map((w) => (
+        <button
+          key={w}
+          onClick={() => onChange(w)}
+          className={cn(
+            'rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
+            value === w ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          {TW_LABEL[w]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function TunnelSelector({ value, tunnels, onChange }: { value: string; tunnels: string[]; onChange: (t: string) => void }) {
+  // Keep the current selection listed even if it dropped out of the window
+  // (e.g. a tunnel with no recent samples) so the label doesn't blank out.
+  const options = value !== 'all' && !tunnels.includes(value) ? [value, ...tunnels] : tunnels
+  if (tunnels.length === 0 && value === 'all') return null
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="max-w-[10rem] rounded-lg border border-border bg-secondary/40 px-2 py-1 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+      title="Filtrar por túnel"
+    >
+      <option value="all">Todos os túneis</option>
+      {options.map((t) => (
+        <option key={t} value={t}>{t}</option>
+      ))}
+    </select>
   )
 }
 
