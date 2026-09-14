@@ -369,16 +369,27 @@ install_strongswan() {
         log_warn "Could not install swanctl packages (IPsec features may be unavailable)"
 
     # Tighten IKE retransmit timing so a dead peer is detected in ~30s (for IPsec
-    # HA/failover) instead of the stock ~2min. Paired with per-connection dpd_delay=10s
-    # in the generated swanctl config. Idempotent; the restart below picks it up.
-    if [ -f /etc/strongswan.conf ] && ! grep -q "retransmit_tries" /etc/strongswan.conf; then
+    # HA/failover) instead of the stock ~2min, AND retry lost initiations every 60s so a
+    # tunnel self-heals after a WAN drop. Without retry_initiate_interval, once the
+    # retransmits are exhausted charon gives up ("establishing IKE_SA failed, peer not
+    # responding") and the tunnel stays down until a manual initiate. Paired with
+    # per-connection dpd_delay=10s in the generated swanctl config. Idempotent per-setting:
+    # adds only the ones missing, so it also upgrades boxes that predate retry_initiate_interval.
+    if [ -f /etc/strongswan.conf ]; then
         python3 - <<'PYEOF' 2>/dev/null || true
 p = "/etc/strongswan.conf"
 s = open(p).read()
-if "charon {" in s and "retransmit_tries" not in s:
-    s = s.replace("charon {\n",
-                  "charon {\n\tretransmit_timeout = 2.0\n\tretransmit_base = 1.6\n\tretransmit_tries = 4\n", 1)
-    open(p, "w").write(s)
+if "charon {" in s:
+    settings = [
+        ("retransmit_timeout", "2.0"),
+        ("retransmit_base", "1.6"),
+        ("retransmit_tries", "4"),
+        ("retry_initiate_interval", "60"),
+    ]
+    inject = "".join("\t%s = %s\n" % (k, v) for k, v in settings if k not in s)
+    if inject:
+        s = s.replace("charon {\n", "charon {\n" + inject, 1)
+        open(p, "w").write(s)
 PYEOF
     fi
 

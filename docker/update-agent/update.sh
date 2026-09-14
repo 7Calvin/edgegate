@@ -270,6 +270,41 @@ ensure_swanctl_mode() {
 }
 ensure_swanctl_mode || echo "WARN: ensure_swanctl_mode non-zero — IPsec may need manual attention" >> "$LOG_FILE"
 
+# ==================== Self-heal strongSwan retransmit + retry tuning ====================
+# retry_initiate_interval makes charon re-attempt a lost negotiation instead of parking the
+# tunnel down until a manual initiate: a dead peer / WAN drop otherwise exhausts the
+# retransmits and charon gives up ("establishing IKE_SA failed, peer not responding"), so
+# the tunnel never recovers on its own. install.sh adds it on fresh installs; older boxes
+# only have the retransmit_* tuning, so re-assert the full set here idempotently on every
+# update. Non-disruptive: --reload-settings re-reads strongswan.conf without dropping SAs.
+tune_strongswan_conf() {
+    [ -f /etc/strongswan.conf ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    local changed
+    changed="$(python3 - <<'PYEOF' 2>/dev/null || true
+p = "/etc/strongswan.conf"
+s = open(p).read()
+if "charon {" in s:
+    settings = [
+        ("retransmit_timeout", "2.0"),
+        ("retransmit_base", "1.6"),
+        ("retransmit_tries", "4"),
+        ("retry_initiate_interval", "60"),
+    ]
+    inject = "".join("\t%s = %s\n" % (k, v) for k, v in settings if k not in s)
+    if inject:
+        open(p, "w").write(s.replace("charon {\n", "charon {\n" + inject, 1))
+        print("changed")
+PYEOF
+)"
+    if [ "$changed" = "changed" ]; then
+        write_status 39 "running" "Tuning strongSwan (retry_initiate_interval)..."
+        swanctl --reload-settings >> "$LOG_FILE" 2>&1 || true
+        echo "strongswan.conf tuned (retry_initiate_interval + retransmit) and reloaded" >> "$LOG_FILE"
+    fi
+}
+tune_strongswan_conf || true
+
 # ==================== Repair the traefik update-agent bind-mount (reboot-safety) ====
 # Old installs (<=1.4.3) bind-mounted docker/traefik/dynamic/update-agent.yml into
 # traefik. update.sh --delete wiped the host file; on the next reboot Docker recreated
