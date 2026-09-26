@@ -27,6 +27,12 @@ SWANCTL_DIR = os.environ.get('SWANCTL_CONFD', '/etc/swanctl/conf.d')
 MANAGED_FILE = os.path.join(SWANCTL_DIR, 'edgegate.conf')
 STRONGSWAN_SERVICE = os.environ.get('STRONGSWAN_SERVICE', 'strongswan')
 
+# ---- route-based (XFRM interface) support ----
+RB_IFACE_PREFIX = os.environ.get('RB_IFACE_PREFIX', 'eg-')
+RB_UPDOWN = os.environ.get('RB_UPDOWN', '/etc/swanctl/rb-updown.sh')
+RB_METRICS = os.environ.get('RB_METRICS', '/etc/swanctl/rb-metrics.env')
+RB_XFRM_MTU = os.environ.get('RB_XFRM_MTU', '1400')
+
 
 def check_auth():
     # Constant-time comparison to avoid a token timing side-channel.
@@ -332,6 +338,129 @@ def active_remote():
             remotes.append(parts[parts.index('dst') + 1])
     return jsonify({'success': True, 'active': remotes[0] if remotes else None,
                     'all': remotes})
+
+
+# ==================== route-based (XFRM interface) support ====================
+
+_RB_UPDOWN_SCRIPT = """#!/bin/sh
+# EdgeGate route-based updown (managed by ipsec-agent). strongSwan calls this on
+# CHILD_SA up/down for route-based connections; it adds/removes the route to the peer
+# subnet via this path's XFRM interface, so the route METRIC picks the active path and
+# failover happens only on real failure. Env vars come from charon.
+set -u
+IFID="${PLUTO_IF_ID_OUT:-}"
+[ -z "$IFID" ] && exit 0
+IFID_DEC=$(printf '%d' "$IFID" 2>/dev/null || echo "$IFID")
+IFNAME="eg-${IFID_DEC}"
+SUBNET="${PLUTO_PEER_CLIENT:-}"
+[ -z "$SUBNET" ] && exit 0
+METRIC=$(grep "^METRIC_${IFID_DEC}=" /etc/swanctl/rb-metrics.env 2>/dev/null | cut -d= -f2)
+METRIC="${METRIC:-100}"
+case "${PLUTO_VERB:-}" in
+  up-client|up-host)     ip route replace "$SUBNET" dev "$IFNAME" metric "$METRIC" ;;
+  down-client|down-host) ip route del "$SUBNET" dev "$IFNAME" metric "$METRIC" 2>/dev/null || true ;;
+esac
+exit 0
+"""
+
+
+def _ip(*args, timeout=10):
+    return subprocess.run(['ip', *args], capture_output=True, text=True, timeout=timeout)
+
+
+def _default_phys():
+    parts = (_ip('route', 'show', 'default').stdout or '').split()
+    return parts[parts.index('dev') + 1] if 'dev' in parts else os.environ.get('RB_PHYS', 'eth0')
+
+
+def _existing_rb_ifaces():
+    names = []
+    for ln in (_ip('-o', 'link', 'show', 'type', 'xfrm').stdout or '').splitlines():
+        seg = ln.split(':')
+        if len(seg) >= 2:
+            nm = seg[1].strip().split('@')[0].strip()
+            if nm.startswith(RB_IFACE_PREFIX):
+                names.append(nm)
+    return names
+
+
+def _write_rb_files(desired):
+    """Write the updown script (executable) and the per-if_id metric map it reads."""
+    with open(RB_UPDOWN, 'w') as fh:
+        fh.write(_RB_UPDOWN_SCRIPT)
+    os.chmod(RB_UPDOWN, 0o755)
+    lines = [f"METRIC_{spec['if_id']}={spec['metric']}" for spec in desired.values()]
+    with open(RB_METRICS, 'w') as fh:
+        fh.write("\n".join(lines) + "\n")
+    os.chmod(RB_METRICS, 0o644)
+
+
+@app.route('/routebased/apply', methods=['POST'])
+def routebased_apply():
+    """Reconcile route-based XFRM interfaces. Body: {"interfaces":[{ifname,if_id,metric,
+    routes:[cidr]}], "phys":"ens5"?}. Creates desired interfaces, removes stale eg-*,
+    writes the updown script + metric map. Routes are managed by updown on CHILD_SA
+    up/down so metric-based standby fails over only on real failure."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.json or {}
+    phys = data.get('phys') or _default_phys()
+    desired = {}
+    for it in (data.get('interfaces') or []):
+        name, ifid = it.get('ifname'), it.get('if_id')
+        if not name or not str(name).startswith(RB_IFACE_PREFIX) or ifid is None:
+            return jsonify({'success': False, 'error': f'invalid interface entry: {it}'}), 400
+        desired[name] = {'if_id': int(ifid), 'metric': int(it.get('metric', 100))}
+
+    try:
+        os.makedirs(os.path.dirname(RB_UPDOWN), exist_ok=True)
+        _write_rb_files(desired)
+        results = []
+        # remove stale eg-* we no longer manage (dropping the interface drops its routes)
+        for nm in _existing_rb_ifaces():
+            if nm not in desired:
+                _ip('link', 'del', nm)
+                results.append({'ifname': nm, 'action': 'removed'})
+        existing = set(_existing_rb_ifaces())
+        for nm, spec in desired.items():
+            if nm not in existing:
+                cr = _ip('link', 'add', nm, 'type', 'xfrm', 'if_id', str(spec['if_id']), 'dev', phys)
+                if cr.returncode != 0:
+                    results.append({'ifname': nm, 'action': 'create-failed',
+                                    'error': (cr.stderr or '').strip()})
+                    continue
+            _ip('link', 'set', nm, 'up')
+            _ip('link', 'set', nm, 'mtu', str(RB_XFRM_MTU))
+            results.append({'ifname': nm, 'if_id': spec['if_id'],
+                            'metric': spec['metric'], 'action': 'ready'})
+        return jsonify({'success': True, 'phys': phys, 'interfaces': results})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/routebased/active', methods=['POST'])
+def routebased_active():
+    """Active path per peer subnet: the eg-* interface whose route has the lowest metric
+    (route-based analogue of /active-remote)."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+    try:
+        r = _ip('route', 'show')
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'success': False, 'error': str(e)}), 500
+    active = {}
+    for ln in (r.stdout or '').splitlines():
+        parts = ln.split()
+        if 'dev' not in parts:
+            continue
+        dev = parts[parts.index('dev') + 1]
+        if not dev.startswith(RB_IFACE_PREFIX):
+            continue
+        subnet = parts[0]
+        metric = int(parts[parts.index('metric') + 1]) if 'metric' in parts else 0
+        if subnet not in active or metric < active[subnet]['metric']:
+            active[subnet] = {'ifname': dev, 'metric': metric}
+    return jsonify({'success': True, 'active': active})
 
 
 if __name__ == '__main__':

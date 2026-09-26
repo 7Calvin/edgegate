@@ -2,7 +2,7 @@
 IPsec Connection Model for StrongSwan Site-to-Site VPN
 """
 from sqlalchemy import (
-    Column, String, Boolean, DateTime, Text,
+    Column, String, Boolean, DateTime, Text, Integer,
     ForeignKey, Enum as SQLEnum
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -95,6 +95,23 @@ class IPsecConnection(Base):
         SQLEnum(DPDAction, name="dpd_action", values_callable=lambda x: [e.value for e in x]),
         default=DPDAction.RESTART
     )
+
+    # Forwarding mode:
+    #   'policy' -> classic policy-based IPsec: ONE connection with
+    #               remote_addrs=[primary,backup] (see to_swanctl). The peer's two
+    #               tunnels share one reqid/kernel policy, so the outbound (return)
+    #               path follows the last-installed CHILD_SA and OSCILLATES on rekey.
+    #   'route'  -> route-based via XFRM interfaces: ONE connection per peer endpoint,
+    #               each bound to its own if_id (see to_swanctl_routebased). Routing
+    #               metric picks the active path -> primary is deterministic and
+    #               failover happens only on real failure. Default kept 'policy' for
+    #               backward compatibility; flip per-connection (or change the default)
+    #               to adopt route-based.
+    forwarding_mode = Column(String(10), default="route", server_default="policy")
+    # Route-based only: base XFRM interface id. The primary path uses if_id_base and
+    # the backup path uses if_id_base + 1. Allocated on create (must be globally unique
+    # on the host); see IPsecService._allocate_if_id_base().
+    if_id_base = Column(Integer, nullable=True)
 
     # Status
     status = Column(
@@ -378,3 +395,125 @@ class IPsecConnection(Base):
             lines.append("    }")
             return "\n".join(lines)
         return ""
+
+    # ==================== route-based (XFRM interface) generation ====================
+    # Option B. Instead of ONE connection with remote_addrs=[primary,backup] sharing a
+    # single kernel policy (which oscillates by rekey — the last-installed CHILD_SA wins
+    # the outbound policy), emit ONE connection PER peer endpoint, each bound to its own
+    # XFRM interface via if_id_in/out. Routing (metric) picks the active path, so the
+    # primary is deterministic and failover only happens on real failure.
+    #
+    # Validated live on homolog (2026-09-25): swanctl loads if_id_in/out; the local/remote
+    # auth blocks MUST be multi-line (inline `local { auth = psk id = x }` does NOT parse);
+    # `ip link add <name> type xfrm if_id <N> dev <phys>` + `ip route ... dev <name>` work.
+
+    ROUTE_METRIC_PRIMARY = 100
+    ROUTE_METRIC_BACKUP = 200
+
+    def _xfrm_ifname(self, if_id: int) -> str:
+        # Linux ifname is <=15 chars; keyed by if_id so it's stable and unique.
+        return f"eg-{if_id}"
+
+    def _routebased_paths(self):
+        """List of (suffix, remote_ip, if_id, metric) for this connection's tunnels:
+        one entry for a single-link conn, two (primary + backup) when right_ip_backup is
+        set. `prefer_backup` swaps only the route METRICS (manual switch to backup) — the
+        if_ids stay pinned per endpoint."""
+        base = self.if_id_base
+        primary = (self.right_ip or "").strip()
+        backup = (getattr(self, "right_ip_backup", None) or "").strip()
+        pref = bool(getattr(self, "prefer_backup", False))
+        m_pri = self.ROUTE_METRIC_BACKUP if pref else self.ROUTE_METRIC_PRIMARY
+        m_bak = self.ROUTE_METRIC_PRIMARY if pref else self.ROUTE_METRIC_BACKUP
+        paths = [("p", primary, base, m_pri)]
+        if backup and backup != primary:
+            paths.append(("b", backup, base + 1, m_bak))
+        return paths
+
+    def _routebased_conn_block(self, suffix: str, remote_ip: str, if_id: int) -> str:
+        """One `<name>-<suffix> { ... }` connection bound to a single peer + if_id."""
+        left_subnets = [s.strip() for s in self.left_subnet.split(',') if s.strip()]
+        right_subnets = [s.strip() for s in self.right_subnet.split(',') if s.strip()]
+        if len(left_subnets) <= 1 and len(right_subnets) <= 1:
+            pairs = [(self.left_subnet.strip(), self.right_subnet.strip())]
+        else:
+            pairs = [(l, r) for l in left_subnets for r in right_subnets]
+
+        children = []
+        for i, (lts, rts) in enumerate(pairs, 1):
+            cname = (f"{self.name}-{suffix}-net" if len(pairs) == 1
+                     else f"{self.name}-{suffix}-net-{i}")
+            children.append("\n".join([
+                f"            {cname} {{",
+                f"                local_ts = {lts}",
+                f"                remote_ts = {rts}",
+                f"                esp_proposals = {self.esp_cipher}",
+                f"                rekey_time = {self.key_lifetime}",
+                f"                dpd_action = {self._swanctl_dpd_action()}",
+                f"                start_action = {self._swanctl_start_action()}",
+                # updown hook: on CHILD_SA up/down, add/remove the route to the peer
+                # subnet via this path's XFRM interface, so the route METRIC decides the
+                # active path and failover happens only on real failure. The ipsec-agent
+                # writes this script + the per-if_id metric map (see /routebased/apply).
+                f"                updown = /etc/swanctl/rb-updown.sh",
+                f"            }}",
+            ]))
+
+        return "\n".join([
+            f"    {self.name}-{suffix} {{",
+            f"        version = {self._swanctl_version()}",
+            f"        local_addrs = {self.left_ip}",
+            f"        remote_addrs = {remote_ip}",
+            f"        if_id_in = {if_id}",
+            f"        if_id_out = {if_id}",
+            f"        proposals = {self.ike_cipher}",
+            f"        rekey_time = {self.ike_lifetime}",
+            # Short DPD so a dead path is detected fast; the route is withdrawn on
+            # CHILD_SA down (updown) and the other endpoint's metric takes over.
+            f"        dpd_delay = 10s",
+            f"        local {{",
+            f"            auth = {self.auth_method}",
+            f"            id = {self.left_id}",
+            f"        }}",
+            f"        remote {{",
+            f"            auth = {self.auth_method}",
+            # No id pin: the peer authenticates from a distinct IP-id per WAN; security
+            # is remote_addrs (source IP) + PSK, keyed by every peer id in the secret.
+            f"        }}",
+            f"        children {{",
+            "\n".join(children),
+            f"        }}",
+            f"    }}",
+        ])
+
+    def to_swanctl_routebased(self) -> str:
+        """Route-based `connections {}` body: `<name>-p` (+ `<name>-b` if a backup peer
+        exists), each on its own if_id. Requires if_id_base to be allocated. The
+        `secrets {}` block is unchanged — reuse to_swanctl_secret()."""
+        if self.if_id_base is None:
+            raise ValueError(
+                f"IPsec connection '{self.name}': if_id_base not allocated "
+                f"(required for forwarding_mode='route')"
+            )
+        blocks = [self._routebased_conn_block(sfx, ip, ifid)
+                  for (sfx, ip, ifid, _metric) in self._routebased_paths()]
+        return "\n".join(blocks)
+
+    def xfrm_ifaces(self):
+        """Interface/route manifest for the ipsec-agent. For each tunnel path returns
+        {ifname, if_id, metric, peer, routes:[remote CIDRs]}. The agent, per entry:
+          ip link add <ifname> type xfrm if_id <if_id> dev <phys>; ip link set up
+          (per remote CIDR) ip route replace <cidr> dev <ifname> metric <metric>
+        and installs the updown hook that withdraws/reinstalls the route on SA down/up
+        so metric-based standby fails over on real failure only."""
+        right_subnets = [s.strip() for s in self.right_subnet.split(',') if s.strip()]
+        return [
+            {
+                "ifname": self._xfrm_ifname(ifid),
+                "if_id": ifid,
+                "metric": metric,
+                "peer": ip,
+                "routes": right_subnets,
+            }
+            for (_sfx, ip, ifid, metric) in self._routebased_paths()
+        ]

@@ -92,6 +92,11 @@ class IPsecService:
         if data.auth_method == "psk" and not data.psk:
             return None, "PSK (Pre-Shared Key) is required for PSK authentication"
 
+        # Route-based connections need a globally-unique base XFRM if_id (primary=base,
+        # backup=base+1). Allocate it up front so config generation has it.
+        forwarding_mode = getattr(data, "forwarding_mode", "policy") or "policy"
+        if_id_base = await self._allocate_if_id_base() if forwarding_mode == "route" else None
+
         connection = IPsecConnection(
             name=data.name,
             description=data.description,
@@ -112,6 +117,8 @@ class IPsecService:
             auto_start=data.auto_start,
             dpd_action=data.dpd_action,
             is_enabled=data.is_enabled,
+            forwarding_mode=forwarding_mode,
+            if_id_base=if_id_base,
             status=IPsecStatus.INACTIVE,
             created_by_id=created_by.id,
         )
@@ -140,6 +147,11 @@ class IPsecService:
 
         for field, value in update_data.items():
             setattr(connection, field, value)
+
+        # Switching to route-based (or already route) with no if_id_base yet -> allocate.
+        if getattr(connection, "forwarding_mode", "policy") == "route" \
+                and getattr(connection, "if_id_base", None) is None:
+            connection.if_id_base = await self._allocate_if_id_base()
 
         await self.db.commit()
         await self.db.refresh(connection)
@@ -221,7 +233,14 @@ class IPsecService:
         enabled connections. This is the swanctl/vici replacement for ipsec.conf."""
         connections, _ = await self.list_connections(is_enabled=True)
 
-        conn_blocks = [c.to_swanctl() for c in connections]
+        # Route-based connections (forwarding_mode='route') emit one conn per peer
+        # endpoint bound to its own XFRM if_id; policy-based emit the classic single
+        # conn with remote_addrs failover. Secrets are identical for both.
+        conn_blocks = [
+            c.to_swanctl_routebased() if getattr(c, "forwarding_mode", "policy") == "route"
+            else c.to_swanctl()
+            for c in connections
+        ]
         secret_blocks = [s for s in (c.to_swanctl_secret() for c in connections) if s]
 
         lines = [
@@ -240,7 +259,9 @@ class IPsecService:
         return "\n".join(lines)
 
     async def apply_config(self) -> Tuple[bool, Optional[str]]:
-        """Write swanctl.conf and (re)load it via the ipsec-agent."""
+        """Write swanctl.conf and (re)load it via the ipsec-agent. For route-based
+        connections, also (re)create the XFRM interfaces BEFORE the reload so the
+        CHILD_SAs bind to existing interfaces and the updown route hook works."""
         try:
             swanctl_conf = await self.generate_swanctl_config()
 
@@ -248,6 +269,14 @@ class IPsecService:
             success, error = await self._agent_write_config(swanctl_conf)
             if not success:
                 return False, f"Failed to write config: {error}"
+
+            # Reconcile route-based XFRM interfaces (create desired, remove stale).
+            # Always sent (empty list cleans up leftovers after a route->policy switch).
+            success, error = await self._agent_apply_routebased()
+            if not success:
+                # Non-fatal to the swanctl load, but surface it: without the interface
+                # the route-based path can't carry traffic.
+                logger.warning("route-based interface apply failed: %s", error)
 
             # Reload swanctl (agent runs `swanctl --load-all`)
             success, output = await self._run_ipsec_command_async(["reload"])
@@ -260,6 +289,55 @@ class IPsecService:
         except Exception as e:
             logger.error(f"Failed to apply IPsec config: {e}")
             return False, str(e)
+
+    async def _agent_apply_routebased(self) -> Tuple[bool, Optional[str]]:
+        """Build the XFRM interface/route manifest from all enabled route-based
+        connections and POST it to the ipsec-agent (/routebased/apply). The agent
+        creates the desired interfaces, removes stale `eg-*` ones, and writes the
+        updown script + per-if_id metric map."""
+        try:
+            connections, _ = await self.list_connections(is_enabled=True)
+            interfaces = []
+            for c in connections:
+                if getattr(c, "forwarding_mode", "policy") == "route":
+                    interfaces.extend(c.xfrm_ifaces())
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.agent_url}/routebased/apply",
+                    headers={"Authorization": f"Bearer {self.agent_token}"},
+                    json={"interfaces": interfaces},
+                )
+                if response.status_code == 404:
+                    # Older agent without the endpoint: only an issue if a conn is
+                    # actually route-based.
+                    if interfaces:
+                        return False, "ipsec-agent has no /routebased/apply (update the agent)"
+                    return True, None
+                if response.status_code == 401:
+                    return False, "Unauthorized - check IPSEC_AGENT_TOKEN"
+                if response.status_code != 200:
+                    return False, f"Agent returned status {response.status_code}"
+                data = response.json()
+                if data.get("success") is False:
+                    return False, data.get("error", "unknown error")
+                return True, None
+        except httpx.ConnectError:
+            return False, "Cannot connect to ipsec-agent"
+        except httpx.TimeoutException:
+            return False, "Timeout connecting to ipsec-agent"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)
+
+    async def _allocate_if_id_base(self) -> int:
+        """Pick a globally-unique base XFRM if_id for a new route-based connection.
+        Each connection reserves two ids (primary=base, backup=base+1), so we step by
+        2 from a fixed floor. Call this on create when forwarding_mode='route' and
+        if_id_base is unset."""
+        connections, _ = await self.list_connections()
+        used = [c.if_id_base for c in connections if getattr(c, "if_id_base", None)]
+        floor = int(os.environ.get("IPSEC_IF_ID_FLOOR", "1000"))
+        return (max(used) + 2) if used else floor
 
     async def _agent_write_config(self, swanctl_conf: str) -> Tuple[bool, Optional[str]]:
         """Write the swanctl config via the ipsec-agent API (agent writes it to
@@ -399,8 +477,19 @@ class IPsecService:
         except Exception as e:
             return False, str(e)
 
+    def _swanctl_conn_names(self, connection) -> List[str]:
+        """swanctl connection name(s) for a DB connection. Route-based connections are
+        emitted as <name>-p (+ <name>-b when a backup exists), so start/stop/status must
+        target those sub-conns — not the base name (which isn't a loaded conn)."""
+        if getattr(connection, "forwarding_mode", "policy") == "route":
+            names = [f"{connection.name}-p"]
+            if (getattr(connection, "right_ip_backup", None) or "").strip():
+                names.append(f"{connection.name}-b")
+            return names
+        return [connection.name]
+
     async def start_connection(self, name: str) -> Tuple[bool, str]:
-        """Start/initiate an IPsec connection"""
+        """Start/initiate an IPsec connection (all sub-conns for route-based)."""
         connection = await self.get_connection_by_name(name)
         if not connection:
             return False, f"Connection '{name}' not found"
@@ -408,35 +497,45 @@ class IPsecService:
         if not connection.is_enabled:
             return False, f"Connection '{name}' is disabled"
 
-        success, output = await self._run_ipsec_command_async(["up", name])
+        outputs, ok_any = [], False
+        for cn in self._swanctl_conn_names(connection):
+            success, output = await self._run_ipsec_command_async(["up", cn])
+            outputs.append(f"{cn}: {output}")
+            ok_any = ok_any or success
 
-        if success:
+        combined = "\n".join(outputs)
+        if ok_any:  # UP if at least one path (primary or backup) initiated
             connection.status = IPsecStatus.ACTIVE
             connection.last_error = None
         else:
             connection.status = IPsecStatus.ERROR
-            connection.last_error = output
+            connection.last_error = combined
 
         connection.last_status_check = datetime.utcnow()
         await self.db.commit()
 
-        return success, output
+        return ok_any, combined
 
     async def stop_connection(self, name: str) -> Tuple[bool, str]:
-        """Stop/terminate an IPsec connection"""
+        """Stop/terminate an IPsec connection (all sub-conns for route-based)."""
         connection = await self.get_connection_by_name(name)
         if not connection:
             return False, f"Connection '{name}' not found"
 
-        success, output = await self._run_ipsec_command_async(["down", name])
+        outputs, ok_all = [], True
+        for cn in self._swanctl_conn_names(connection):
+            success, output = await self._run_ipsec_command_async(["down", cn])
+            outputs.append(f"{cn}: {output}")
+            ok_all = ok_all and success
 
+        combined = "\n".join(outputs)
         connection.status = IPsecStatus.INACTIVE
         connection.last_status_check = datetime.utcnow()
-        if not success:
-            connection.last_error = output
+        if not ok_all:
+            connection.last_error = combined
         await self.db.commit()
 
-        return success, output
+        return ok_all, combined
 
     async def restart_connection(self, name: str) -> Tuple[bool, str]:
         """Restart an IPsec connection"""
@@ -545,11 +644,13 @@ class IPsecService:
     # ==================== Status Monitoring ====================
 
     async def get_status(self, name: Optional[str] = None) -> Dict[str, Any]:
-        """Get IPsec connection status from StrongSwan"""
-        if name:
-            success, output = await self._run_ipsec_command_async(["status", name])
-        else:
-            success, output = await self._run_ipsec_command_async(["statusall"])
+        """Get IPsec connection status from StrongSwan.
+
+        Always lists ALL SAs (not `--ike <name>`): a route-based connection loads as
+        <name>-p/<name>-b, so a per-name swanctl filter finds nothing and the tunnel
+        reads DOWN. We parse everything (the parser aggregates -p/-b under the base
+        name), then filter to `name` if requested."""
+        success, output = await self._run_ipsec_command_async(["statusall"])
 
         if not success:
             return {
@@ -563,6 +664,10 @@ class IPsecService:
         # Parse output
         result = self._parse_status_output(output)
         await self._enrich_status(result, single_name=name)
+        if name:
+            result["connections"] = [
+                e for e in result.get("connections", []) if e.get("name") == name
+            ]
         return result
 
     async def _enrich_status(self, result: Dict[str, Any], single_name: Optional[str] = None) -> None:
@@ -582,6 +687,10 @@ class IPsecService:
 
             ok, data = await self._agent_post("/active-remote")
             active = set((data or {}).get("all") or []) if (ok and isinstance(data, dict)) else set()
+            # Route-based: the active path is decided by ROUTE METRIC, not the XFRM policy
+            # (which can list a stale/backup outbound tmpl). Read the live route per subnet.
+            okr, rdata = await self._agent_post("/routebased/active")
+            rb_active = ((rdata or {}).get("active") or {}) if (okr and isinstance(rdata, dict)) else {}
 
             q = select(IPsecConnection).where(IPsecConnection.is_enabled.is_(True))
             if single_name:
@@ -592,7 +701,23 @@ class IPsecService:
                 entry = by_entry.get(c.name)
                 if entry is not None:
                     backup = (c.right_ip_backup or "").strip()
-                    if active:
+                    if getattr(c, "forwarding_mode", "policy") == "route" and c.if_id_base is not None:
+                        # Active path = the route-metric winner. Map its XFRM ifname
+                        # (eg-<if_id_base> = primary, eg-<if_id_base+1> = backup) to the peer.
+                        prim_if, bak_if = f"eg-{c.if_id_base}", f"eg-{c.if_id_base + 1}"
+                        active_if = None
+                        for sub in [s.strip() for s in (c.right_subnet or "").split(",") if s.strip()]:
+                            info = rb_active.get(sub)
+                            if info and info.get("ifname"):
+                                active_if = info["ifname"]
+                                break
+                        if active_if == bak_if and backup:
+                            entry["remote_host"] = backup
+                            entry["on_backup"] = True   # WAN primária caiu -> backup ativo
+                        elif active_if == prim_if:
+                            entry["remote_host"] = c.right_ip
+                            entry["on_backup"] = False if backup else None
+                    elif active:
                         if c.right_ip in active:
                             entry["remote_host"] = c.right_ip
                             entry["on_backup"] = False if backup else None
@@ -664,7 +789,10 @@ class IPsecService:
         by_conn: Dict[str, Dict[str, Any]] = {}
         rank = {"UP": 3, "IKE_ONLY": 2, "CONNECTING": 1, "DOWN": 0}
         for blk in blocks:
-            conn_name = blk["name"]
+            # Route-based connections load as <name>-p / <name>-b; collapse the suffix so
+            # both paths aggregate under the DB connection name (active_paths counts them),
+            # else the UI (which looks up by base name) shows the tunnel as down.
+            conn_name = re.sub(r'-(p|b)$', '', blk["name"])
             ike_state = blk["ike_state"]
             body = "\n".join(blk["lines"])
 
@@ -683,8 +811,12 @@ class IPsecService:
             rh = re.search(r"^\s*remote\s+'[^']*'\s+@\s+(\S+?)\[", body, re.MULTILINE)
             remote_host = rh.group(1) if rh else None
             up = re.search(r'established\s+([^,\n]+)', body)
-            bi = re.search(r'^\s*in\s+\S+,\s+(\d+)\s+bytes', body, re.MULTILINE)
-            bo = re.search(r'^\s*out\s+\S+,\s+(\d+)\s+bytes', body, re.MULTILINE)
+            # SPI may carry an XFRM if_id annotation on route-based SAs, e.g.
+            #   in  cd3e55ef (-|0x000003e8), 104704 bytes, ...
+            # so allow an optional " (...)" between the SPI and the comma (policy-based
+            # SAs have just "in  <spi>,  <bytes> bytes").
+            bi = re.search(r'^\s*in\s+\S+(?:\s+\([^)]*\))?,\s+(\d+)\s+bytes', body, re.MULTILINE)
+            bo = re.search(r'^\s*out\s+\S+(?:\s+\([^)]*\))?,\s+(\d+)\s+bytes', body, re.MULTILINE)
             lts = re.search(r'^\s*local\s+(\d[\d./]*(?:,\s*\d[\d./]*)*)\s*$', body, re.MULTILINE)
             rts = re.search(r'^\s*remote\s+(\d[\d./]*(?:,\s*\d[\d./]*)*)\s*$', body, re.MULTILINE)
             rk = re.search(r'rekeying in\s+(\S+)', body)

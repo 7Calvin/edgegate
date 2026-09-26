@@ -578,7 +578,7 @@ def _fg_base(base: str, conn_name: str) -> str:
 
 
 def _export_fortigate(c, fortios, wan_pri, wan_bak, lan_if, sla_src, lid_pri, lid_bak,
-                      base, client_lan) -> str:
+                      base, client_lan, sdwan_base: int = 201) -> str:
     prop_ike, dhgrp = _split_cipher(c.ike_cipher)
     prop_esp, esp_grp = _split_cipher(c.esp_cipher)
     # Phase-2 PFS must mirror EdgeGate's swanctl esp_proposals, NOT the IKE cipher.
@@ -595,6 +595,11 @@ def _export_fortigate(c, fortios, wan_pri, wan_bak, lan_if, sla_src, lid_pri, li
     sla = "".join(ch for ch in b if ch.isalnum()) or "EGSLA"   # health-check: no hyphen
     zone, net_addr, cli_addr = f"{b}-zone", f"{b}-net", f"{b}-cli"
     rule, pol_out, pol_in = f"{b}-rule", f"{b}-pol-out", f"{b}-pol-in"
+    # SD-WAN member ids: primary (p) / backup (s). Parameterized (sdwan_base) so the
+    # export never clobbers a FortiGate that already uses the old hardcoded 201/202
+    # (e.g. a box with an existing SD-WAN member 202 / service 201). The service rule
+    # reuses `p` (members and service are separate id namespaces on FortiOS).
+    p, s = sdwan_base, sdwan_base + 1
 
     lsub = c.left_subnet.split(",")[0].strip()
     rsub = c.right_subnet.split(",")[0].strip()
@@ -620,7 +625,7 @@ def _export_fortigate(c, fortios, wan_pri, wan_bak, lan_if, sla_src, lid_pri, li
     # clean 1-link -> 2-link upgrade: the interface {n1} is already an SD-WAN member and
     # the route/policies already reference the zone (not the interface), so adding a backup
     # later is purely additive (drop in {n2} as member 202 and bump the health-check /
-    # service to `members 201 202`) — no "interface in use" conflict, no UNDO needed. A
+    # service to `members {p} {s}`) — no "interface in use" conflict, no UNDO needed. A
     # single-member SD-WAN is valid; the SLA source is required just like in failover.
     if not (c.right_ip_backup or "").strip():
         return f"""# ============================================================================
@@ -669,7 +674,7 @@ config system sdwan
         next
     end
     config members
-        edit 201
+        edit {p}
             set interface "{n1}"
             set zone "{zone}"
             set source {sla_src}
@@ -679,16 +684,19 @@ config system sdwan
         edit "{sla}"
             set server "{c.left_ip}"
             set source {sla_src}
-            set members 201
+            set members {p}
             config sla
                 edit 1
-                    set latency-threshold 150
+                    set link-cost-factor latency packet-loss jitter
+                    set latency-threshold 200
+                    set packetloss-threshold 5
+                    set jitter-threshold 30
                 next
             end
         next
     end
     config service
-        edit 201
+        edit {p}
             set name "{rule}"
             set mode sla
             set dst "{net_addr}"
@@ -698,7 +706,7 @@ config system sdwan
                     set id 1
                 next
             end
-            set priority-members 201
+            set priority-members {p}
             set priority-zone "{zone}"
         next
     end
@@ -751,7 +759,7 @@ end
 #    NATeado pela WAN e a volta quebra.
 # 3) O SLA precisa ter `source` dentro da rede protegida do cliente (já setado acima).
 # 4) UPGRADE p/ failover: preencha o IP de backup na conexão e reinjete o download —
-#    ele adiciona {b}-02 como membro 202 e sobe o health-check/service p/ `201 202`.
+#    ele adiciona {b}-02 como membro {s} e sobe o health-check/service p/ `{p} {s}`.
 #    Nada a desfazer aqui: a {n1} já é membro de SD-WAN, rota e policies já são por zona.
 # 5) ORDEM — policies e a SD-WAN rule entram no FIM da lista (edit 0 = aditivo). Para
 #    colocá-las no topo:
@@ -761,7 +769,7 @@ end
 #      end
 #      config system sdwan
 #          config service
-#              move 201 before <id-da-1a-service-rule>   # nossa rule "{rule}" = 201
+#              move {p} before <id-da-1a-service-rule>   # nossa rule "{rule}" = {p}
 #          end
 #      end
 #    (No GUI: arraste as policies em Firewall Policy e a rule em Network → SD-WAN → Rules.)
@@ -769,7 +777,7 @@ end
 # ── UNDO ─ cole para remover tudo acima ─────────────────────────────────────
 # firewall policy: delete {pol_out} / {pol_in}
 # router static: delete as rotas (dst {lnet}/{lmask})
-# system sdwan: service(del 201) -> health-check(del {sla}) -> members(del 201) -> zone(del {zone})
+# system sdwan: service(del {p}) -> health-check(del {sla}) -> members(del {p}) -> zone(del {zone})
 # vpn ipsec phase2/phase1-interface: delete {n1}
 # firewall address: delete {net_addr}{(' / ' + cli_addr) if cli_src != 'all' else ''}
 """
@@ -840,12 +848,12 @@ config system sdwan
         next
     end
     config members
-        edit 201
+        edit {p}
             set interface "{n1}"
             set zone "{zone}"
             set source {sla_src}
         next
-        edit 202
+        edit {s}
             set interface "{n2}"
             set zone "{zone}"
             set source {sla_src}
@@ -855,16 +863,19 @@ config system sdwan
         edit "{sla}"
             set server "{c.left_ip}"
             set source {sla_src}
-            set members 201 202
+            set members {p} {s}
             config sla
                 edit 1
-                    set latency-threshold 150
+                    set link-cost-factor latency packet-loss jitter
+                    set latency-threshold 200
+                    set packetloss-threshold 5
+                    set jitter-threshold 30
                 next
             end
         next
     end
     config service
-        edit 201
+        edit {p}
             set name "{rule}"
             set mode sla
             set dst "{net_addr}"
@@ -874,7 +885,7 @@ config system sdwan
                     set id 1
                 next
             end
-            set priority-members 201 202
+            set priority-members {p} {s}
             set priority-zone "{zone}"
         next
     end
@@ -935,7 +946,7 @@ end
 #      end
 #      config system sdwan
 #          config service
-#              move 201 before <id-da-1a-service-rule>   # nossa rule "{rule}" = 201
+#              move {p} before <id-da-1a-service-rule>   # nossa rule "{rule}" = {p}
 #          end
 #      end
 #    (No GUI: arraste as policies em Firewall Policy e a rule em Network → SD-WAN → Rules.)
@@ -943,7 +954,7 @@ end
 # ── UNDO ─ cole para remover tudo acima ─────────────────────────────────────
 # firewall policy: delete {pol_out} / {pol_in}
 # router static: delete as rotas (dst {lnet}/{lmask})
-# system sdwan: service(del 201) -> health-check(del {sla}) -> members(del 201 202) -> zone(del {zone})
+# system sdwan: service(del {p}) -> health-check(del {sla}) -> members(del {p} {s}) -> zone(del {zone})
 # vpn ipsec phase2/phase1-interface: delete {n1} / {n2}
 # firewall address: delete {net_addr}{(' / ' + cli_addr) if cli_src != 'all' else ''}
 """
@@ -962,6 +973,7 @@ async def export_connection_config(
     localid_bak: str = "",
     base: str = "",
     client_lan: str = "",
+    sdwan_base: int = 201,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -998,7 +1010,7 @@ async def export_connection_config(
         conn, fortios, wan_pri, wan_bak, lan_if, sla_src,
         (localid_pri or default_pri),
         (localid_bak or default_bak),
-        base, client_lan,
+        base, client_lan, sdwan_base,
     )
 
 

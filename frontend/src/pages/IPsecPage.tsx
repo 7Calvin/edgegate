@@ -65,6 +65,7 @@ interface ConnectionForm {
   key_lifetime: string
   auto_start: boolean
   dpd_action: string
+  forwarding_mode: string
   is_enabled: boolean
 }
 
@@ -85,6 +86,11 @@ const DPD_ACTION_OPTIONS = [
   { value: 'clear', label: 'Clear - Remover SA em caso de falha' },
   { value: 'hold', label: 'Hold - Continuar tentando' },
   { value: 'none', label: 'None - Desabilitar DPD' },
+]
+
+const FORWARDING_MODE_OPTIONS = [
+  { value: 'route', label: 'Route-based (Recomendado - XFRM, failover determinístico)' },
+  { value: 'policy', label: 'Policy-based (legado)' },
 ]
 
 const IKE_CIPHER_PRESETS = [
@@ -120,6 +126,7 @@ const createInitialForm = (serverInfo?: ServerInfo): ConnectionForm => ({
   key_lifetime: '1h',
   auto_start: true,
   dpd_action: 'restart',
+  forwarding_mode: 'route',
   is_enabled: true,
 })
 
@@ -135,7 +142,7 @@ export default function IPsecPage() {
   const [exportForm, setExportForm] = useState({
     target: 'fortigate', fortios: '7.4', wan_pri: '', wan_bak: '',
     lan_if: '', sla_src: '', localid_pri: '', localid_bak: '',
-    base: '', client_lan: '',
+    base: '', client_lan: '', sdwan_base: '201',
   })
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false)
   const [isLogsModalOpen, setIsLogsModalOpen] = useState(false)
@@ -153,7 +160,7 @@ export default function IPsecPage() {
     queryFn: () => ipsecApi.list().then((res) => res.data),
   })
 
-  const { data: status, refetch: refetchStatus } = useQuery<IPsecStatus>({
+  const { data: status, refetch: refetchStatus, isFetching: isFetchingStatus } = useQuery<IPsecStatus>({
     queryKey: ['ipsec-status'],
     queryFn: () => ipsecApi.status().then((res) => res.data),
     refetchInterval: 10000,
@@ -178,6 +185,7 @@ export default function IPsecPage() {
       localid_bak: exportForm.localid_bak,
       base: exportForm.base,
       client_lan: exportForm.client_lan || '',
+      sdwan_base: exportForm.sdwan_base || '201',
     }).then((res) => res.data as string),
     enabled: !!exportConn,
   })
@@ -480,6 +488,8 @@ export default function IPsecPage() {
     }
     if (formData.auto_start !== (orig.auto_start ?? true)) updateData.auto_start = formData.auto_start
     if (formData.is_enabled !== (orig.is_enabled ?? true)) updateData.is_enabled = formData.is_enabled
+    if (formData.forwarding_mode !== ((orig as unknown as Record<string, unknown>).forwarding_mode ?? 'policy'))
+      updateData.forwarding_mode = formData.forwarding_mode
     if (formData.psk && formData.psk !== '********') updateData.psk = formData.psk
 
     if (Object.keys(updateData).length === 0) {
@@ -519,6 +529,7 @@ export default function IPsecPage() {
       key_lifetime: conn.key_lifetime || '1h',
       auto_start: conn.auto_start ?? true,
       dpd_action: conn.dpd_action || 'restart',
+      forwarding_mode: (conn as unknown as Record<string, string>).forwarding_mode || 'policy',
       is_enabled: conn.is_enabled ?? true,
     })
     setShowBackup(!!(conn.right_ip_backup && conn.right_ip_backup.trim()))
@@ -608,8 +619,8 @@ export default function IPsecPage() {
             <RefreshCw className={`h-4 w-4 mr-1 ${syncStatusMutation.isPending ? 'animate-spin' : ''}`} />
             Sincronizar
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => refetchStatus()}>
-            <RefreshCw className="h-4 w-4" />
+          <Button variant="ghost" size="sm" onClick={() => refetchStatus()} disabled={isFetchingStatus} title="Atualizar status">
+            <RefreshCw className={`h-4 w-4 ${isFetchingStatus ? 'animate-spin' : ''}`} />
           </Button>
           <div className="w-px h-5 bg-border mx-0.5" aria-hidden="true" />
           <Button
@@ -1082,6 +1093,15 @@ export default function IPsecPage() {
                       options={DPD_ACTION_OPTIONS}
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="add-forwarding_mode">Modo de encaminhamento</Label>
+                    <Select
+                      id="add-forwarding_mode"
+                      value={formData.forwarding_mode}
+                      onChange={(e) => updateField('forwarding_mode', e.target.value)}
+                      options={FORWARDING_MODE_OPTIONS}
+                    />
+                  </div>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
@@ -1360,6 +1380,15 @@ export default function IPsecPage() {
                       options={DPD_ACTION_OPTIONS}
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-forwarding_mode">Modo de encaminhamento</Label>
+                    <Select
+                      id="edit-forwarding_mode"
+                      value={formData.forwarding_mode}
+                      onChange={(e) => updateField('forwarding_mode', e.target.value)}
+                      options={FORWARDING_MODE_OPTIONS}
+                    />
+                  </div>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
@@ -1549,6 +1578,19 @@ export default function IPsecPage() {
                     />
                     <p className="text-[10px] text-muted-foreground mt-0.5">
                       túnel {(exportForm.base || '...')}-01{exportHasBackup ? '/-02' : ''} · SLA {exportForm.base.replace(/[^A-Za-z0-9]/g, '') || '...'} · {exportForm.base.length}/12
+                    </p>
+                  </div>
+                  <div>
+                    <Label>ID base do SD-WAN (membros/service)</Label>
+                    <Input
+                      type="number"
+                      value={exportForm.sdwan_base}
+                      onChange={(e) => setExportForm((f) => ({ ...f, sdwan_base: e.target.value }))}
+                      onBlur={(e) => setExportForm((f) => ({ ...f, sdwan_base: (e.target.value || '201').trim() }))}
+                      placeholder="201"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      membros {exportForm.sdwan_base || '201'}/{Number(exportForm.sdwan_base || 201) + 1} · service {exportForm.sdwan_base || '201'} — use IDs LIVRES no FortiGate (o padrão 201/202 colide se já houver SD-WAN existente)
                     </p>
                   </div>
                   <p className="text-xs text-muted-foreground">

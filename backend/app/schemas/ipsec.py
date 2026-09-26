@@ -80,6 +80,10 @@ class IPsecConnectionCreate(IPsecConnectionBase):
     auto_start: bool = True
     dpd_action: DPDAction = DPDAction.RESTART
     is_enabled: bool = True
+    # Forwarding mode: 'route' (default — route-based via XFRM interfaces, deterministic
+    # primary by metric; the create route allocates if_id_base automatically) or 'policy'
+    # (legacy single conn w/ remote_addrs failover). New connections default to route-based.
+    forwarding_mode: str = Field(default="route", pattern=r'^(policy|route)$')
 
     @field_validator("left_ip", "right_ip")
     @classmethod
@@ -188,6 +192,9 @@ class IPsecConnectionUpdate(BaseModel):
     auto_start: Optional[bool] = None
     dpd_action: Optional[DPDAction] = None
     is_enabled: Optional[bool] = None
+    # Switching policy<->route on an existing conn allocates if_id_base on demand
+    # (handled in the update route) if not already set.
+    forwarding_mode: Optional[str] = Field(None, pattern=r'^(policy|route)$')
 
     @field_validator("left_ip", "right_ip")
     @classmethod
@@ -317,6 +324,8 @@ class IPsecConnectionResponse(BaseModel):
     # Control
     auto_start: bool
     dpd_action: DPDAction
+    forwarding_mode: str = "policy"
+    if_id_base: Optional[int] = None
 
     # Status
     status: IPsecStatus
@@ -359,6 +368,7 @@ class IPsecConnectionListResponse(BaseModel):
     status: IPsecStatus
     is_enabled: bool
     auto_start: bool
+    forwarding_mode: str = "policy"
     last_error: Optional[str]
     last_status_check: Optional[datetime]
     created_at: datetime
