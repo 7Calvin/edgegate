@@ -6,12 +6,16 @@
 #   1. resolves the target version (bump patch/minor/major, or an explicit X.Y.Z)
 #   2. preflight checks (on the right branch, clean tree, tag not already used,
 #      local branch not behind the remote)
-#   3. writes VERSION, commits "chore: release vX.Y.Z"
+#   3. stamps CHANGELOG '[Não lançado]' -> '[X.Y.Z] - <date>', writes VERSION,
+#      commits "chore: release vX.Y.Z"
 #   4. creates the annotated git tag vX.Y.Z
 #   5. pushes the branch AND the tag to origin  <-- the step that's easy to forget
+#   6. publishes the GitHub Release from the CHANGELOG section (via gh)
 #
 # The running server's update-agent deploys the LATEST TAG, so forgetting to push
 # the tag means the panel never sees the update. This script always pushes both.
+# It also always publishes the GitHub Release (from CHANGELOG.md '[Não lançado]',
+# or --generate-notes as fallback) so the Releases page never lags the tags again.
 #
 # Usage:
 #   ./scripts/release.sh                # bump patch  (1.1.7 -> 1.1.8)
@@ -45,6 +49,42 @@ ok()   { printf "${G}==>${N} %s\n" "$*"; }
 warn() { printf "${Y}==>${N} %s\n" "$*"; }
 die()  { printf "${R}error:${N} %s\n" "$*" >&2; exit 1; }
 run()  { if [ "$DRY_RUN" = "1" ]; then printf "${Y}[dry-run]${N} %s\n" "$*"; else eval "$@"; fi; }
+have_gh() { command -v gh >/dev/null 2>&1; }
+
+# print the body of the [Não lançado]/[Unreleased] section of a CHANGELOG (index-based,
+# no regex, so awk's escape handling can't mangle the [ ] brackets).
+get_unreleased_notes() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  awk '
+    index($0,"## [Não lançado]")==1 || index($0,"## [Unreleased]")==1 { f=1; next }
+    f && index($0,"## [")==1 { exit }
+    f { print }
+  ' "$f"
+}
+
+# stamp [Não lançado] -> [X.Y.Z] — <date>, reopen an empty Unreleased, fix compare links.
+promote_changelog() {
+  local f="$1" new="$2" date="$3" prev="$4" sep tmp
+  sep="$(printf '—')"   # em dash, matches the rest of the file
+  tmp="$(mktemp)"
+  awk -v new="$new" -v date="$date" -v prev="$prev" -v sep="$sep" '
+    !stamped && (index($0,"## [Não lançado]")==1 || index($0,"## [Unreleased]")==1) {
+      print $0; print ""; print "## [" new "] " sep " " date; stamped=1; next
+    }
+    !linked && (index($0,"[Não lançado]:")==1 || index($0,"[Unreleased]:")==1) {
+      p = index($0,"http"); c = index($0,"/compare/")
+      if (p>0 && c>0) {
+        base = substr($0, p, (c+9)-p)
+        lbl  = substr($0, 1, index($0,": ")+1)
+        print lbl base "v" new "...HEAD"
+        print "[" new "]: " base "v" prev "...v" new
+        linked=1; next
+      }
+    }
+    { print }
+  ' "$f" > "$tmp" && mv "$tmp" "$f"
+}
 
 [ -f "$VERSION_FILE" ] || die "VERSION file not found at $VERSION_FILE"
 cd "$APP_DIR"
@@ -101,6 +141,14 @@ if git rev-parse -q --verify "$REMOTE/$BRANCH" >/dev/null 2>&1; then
 fi
 ok "Preflight OK"
 
+# ---- changelog notes (read BEFORE we rewrite the file) ----
+CHANGELOG_FILE="$APP_DIR/CHANGELOG.md"
+RELEASE_DATE="$(date +%F)"
+NOTES="$(get_unreleased_notes "$CHANGELOG_FILE")"
+if ! printf '%s' "$NOTES" | grep -q '[^[:space:]]'; then NOTES=""; fi
+if [ -n "$NOTES" ]; then log "CHANGELOG '[Não lançado]' has notes -> they become the $TAG release body"
+else warn "CHANGELOG has no '[Não lançado]' notes -> GitHub release will use --generate-notes"; fi
+
 # ---- write VERSION (+ mirror into package.json / __init__.py), commit, tag ----
 PKG_JSON="$APP_DIR/frontend/package.json"
 INIT_PY="$APP_DIR/backend/app/__init__.py"
@@ -109,8 +157,10 @@ if [ "$DRY_RUN" != "1" ]; then
     printf '%s\n' "$NEW" > "$VERSION_FILE"
     [ -f "$PKG_JSON" ] && sed -i -E "s/(\"version\"[[:space:]]*:[[:space:]]*\")[0-9]+\.[0-9]+\.[0-9]+(\")/\1${NEW}\2/" "$PKG_JSON"
     [ -f "$INIT_PY" ]  && sed -i -E "s/(__version__[[:space:]]*=[[:space:]]*\")[0-9]+\.[0-9]+\.[0-9]+(\")/\1${NEW}\2/" "$INIT_PY"
+    if [ -f "$CHANGELOG_FILE" ]; then log "Stamping CHANGELOG '[Não lançado]' -> '[$NEW] — $RELEASE_DATE'"; promote_changelog "$CHANGELOG_FILE" "$NEW" "$RELEASE_DATE" "$CURRENT"; fi
 fi
-run "git add '$VERSION_FILE' '$PKG_JSON' '$INIT_PY'"
+ADDQ="'$VERSION_FILE'"; for _f in "$PKG_JSON" "$INIT_PY" "$CHANGELOG_FILE"; do [ -f "$_f" ] && ADDQ="$ADDQ '$_f'"; done
+run "git add -- $ADDQ"
 run "git commit -m 'chore: release $TAG'"
 ok "Committed release $TAG"
 run "git tag -a '$TAG' -m '$TAG'"
@@ -120,6 +170,22 @@ ok "Tagged $TAG"
 log "Pushing $BRANCH + $TAG to $REMOTE ..."
 run "git push '$REMOTE' '$BRANCH' '$TAG'"
 ok "Pushed $BRANCH and tag $TAG to $REMOTE"
+
+# ---- publish the GitHub Release (from the CHANGELOG) so it's never forgotten ----
+if have_gh; then
+  if [ -n "$NOTES" ]; then
+    NF="$(mktemp)"; printf '%s\n' "$NOTES" > "$NF"
+    run "gh release create '$TAG' --title '$TAG' --verify-tag --notes-file '$NF'" \
+      || warn "gh release create failed (tag is pushed). Retry: gh release create $TAG --title $TAG --verify-tag --notes-file <notes>"
+    [ "$DRY_RUN" = "1" ] || rm -f "$NF"
+  else
+    run "gh release create '$TAG' --title '$TAG' --verify-tag --generate-notes" \
+      || warn "gh release create failed (tag is pushed)."
+  fi
+  [ "$DRY_RUN" = "1" ] || ok "GitHub Release $TAG published."
+else
+  warn "gh CLI not found — GitHub Release NOT created. Run: gh release create $TAG --title $TAG --verify-tag --notes-file <notes-from-CHANGELOG>"
+fi
 
 echo
 ok "Release $TAG is live on $REMOTE."

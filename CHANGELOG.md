@@ -10,9 +10,6 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-Alvo: **v2.1.0** (branch `feature/ipsec-routebased`). Validado no homolog contra
-um FortiGate real; aguardando sinal para merge + tag.
-
 ### Adicionado
 - **IPsec route-based (interface XFRM) com failover determinístico** — novo modo de
   encaminhamento (`policy` | `route`, **`route` é o default** para novas conexões;
