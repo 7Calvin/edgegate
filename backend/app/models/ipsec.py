@@ -246,10 +246,14 @@ class IPsecConnection(Base):
         return "start" if self.auto_start else "trap"
 
     def _swanctl_dpd_action(self) -> str:
-        # legacy DPDAction -> swanctl child dpd_action ('hold' has no swanctl equivalent)
+        # legacy DPDAction -> swanctl child dpd_action. swanctl's canonical values are
+        # clear | trap | start; the old "restart" (reinitiate on dead peer) IS swanctl
+        # "start", and "hold" IS "trap". Emit the canonical names so the config is valid
+        # on every strongSwan version (6.0.4 tolerates "restart" and shows "start", but
+        # older/other builds may reject it and silently fall back -> no failover).
         return {
-            "restart": "restart", "clear": "clear", "hold": "trap", "none": "none",
-        }.get(self.dpd_action.value, "restart")
+            "restart": "start", "clear": "clear", "hold": "trap", "none": "clear",
+        }.get(self.dpd_action.value, "start")
 
     def _remote_id(self) -> str:
         # right_id is often left blank; strongSwan then keys off the peer IP.
