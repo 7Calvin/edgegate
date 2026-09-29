@@ -480,6 +480,16 @@ export default function IPsecPage() {
     }
   }
 
+  // Só os comandos: remove as linhas de comentário (#) e comprime os espaços que sobram,
+  // pra colar limpo no CLI do FortiGate. O preview na tela mantém os comentários (contexto/UNDO).
+  const configOnly = (text: string) =>
+    text
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('#'))
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim() + '\n'
+
   const { data: serverInfo } = useQuery<ServerInfo>({
     queryKey: ['ipsec-server-info'],
     queryFn: () => ipsecApi.serverInfo().then((res) => res.data),
@@ -1369,8 +1379,8 @@ export default function IPsecPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setExportConn(null)}>Fechar</Button>
-            <Button variant="outline" onClick={() => { if (exportText) copyText(exportText) }}>
-              <Copy className="h-4 w-4 mr-2" /> Copiar
+            <Button variant="outline" onClick={() => { if (exportText) copyText(configOnly(exportText)) }} title="Copia só os comandos (sem os comentários #), pronto pra colar no CLI">
+              <Copy className="h-4 w-4 mr-2" /> Copiar comandos
             </Button>
             <Button onClick={downloadExport} disabled={!exportText}>
               <Download className="h-4 w-4 mr-2" /> Baixar

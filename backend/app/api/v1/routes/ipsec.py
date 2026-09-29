@@ -828,10 +828,6 @@ config vpn ipsec phase1-interface
         set psksecret {psk}
     next
 end
-# FIX mesmo-IP-de-peer: IPs de tunel distintos por path. Com o mesmo remote-gw nos dois
-# tuneis, so assim (net-device enable acima + os /32 abaixo) o FortiGate ORIGINA pelos
-# dois. Sem isto o 2o tunel fica em enc=0 (validado). Link-local; a phase1-interface
-# cria a system interface, aqui so setamos o IP.
 config system interface
     edit "{n1}"
         set ip {tip1_l} 255.255.255.255
