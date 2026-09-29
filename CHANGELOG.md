@@ -10,6 +10,8 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [2.1.1] — 2026-09-29
+
 ### Corrigido
 - **IPsec route-based: switch manual primário/backup não derruba mais o outro túnel.**
   O `set_prefer_backup` era do desenho policy-based e, no route-based, chamava
@@ -206,7 +208,8 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 ## [2.0.0] — 2026-08-22
 - **Release público inicial do EdgeGate v2.0.0.**
 
-[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.1.0...HEAD
+[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/7Calvin/edgegate/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/7Calvin/edgegate/compare/v2.0.12...v2.1.0
 [2.0.12]: https://github.com/7Calvin/edgegate/compare/v2.0.11...v2.0.12
 [2.0.11]: https://github.com/7Calvin/edgegate/compare/v2.0.10...v2.0.11
