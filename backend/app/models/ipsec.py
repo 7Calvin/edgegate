@@ -501,7 +501,7 @@ class IPsecConnection(Base):
             f"        rekey_time = {self.ike_lifetime}",
             # Short DPD so a dead path is detected fast; the route is withdrawn on
             # CHILD_SA down (updown) and the other endpoint's metric takes over.
-            f"        dpd_delay = 10s",
+            f"        dpd_delay = 3s",
             f"        local {{",
             f"            auth = {self.auth_method}",
             f"            id = {self.left_id}",

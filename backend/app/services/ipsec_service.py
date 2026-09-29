@@ -618,17 +618,23 @@ class IPsecService:
         conn.prefer_backup = prefer
         await self.db.commit()
 
-        # Apply: for route-based this rewrites the per-if_id metric map AND re-points the
-        # LIVE routes to the new metrics (ipsec-agent /routebased/apply), so the active
-        # path moves by route metric with BOTH SAs staying up.
+        # Route-based manual switch = JUST a metric swap. Push the new per-if_id metrics
+        # to the ipsec-agent (/routebased/apply re-points the LIVE routes) WITHOUT a full
+        # swanctl reload. apply_config()'s `swanctl --load-all` would needlessly re-key an
+        # idle/degraded SA — a ~1s blip on the still-up path (observed when the primary
+        # path is down and you switch). Both SAs stay ESTABLISHED; the active path just
+        # follows the lower metric.
+        if getattr(conn, "forwarding_mode", "policy") == "route":
+            ok, err = await self._agent_apply_routebased()
+            if not ok:
+                return False, f"Metric swap failed: {err}"
+            return True, f"Now preferring {'backup' if prefer else 'primary'} ({target})"
+
+        # Policy-based: full config apply (rewrites remote_addrs order), then the trick
+        # below. Route-based already returned above.
         ok, err = await self.apply_config()
         if not ok:
             return False, f"Config apply failed: {err}"
-
-        # Route-based is done — metric swap already moved the active path; blocking the
-        # primary (the policy-based trick below) would wrongly tear down the primary SA.
-        if getattr(conn, "forwarding_mode", "policy") == "route":
-            return True, f"Now preferring {'backup' if prefer else 'primary'} ({target})"
 
         # Policy-based only: the peer (e.g. a FortiGate with a conn per IP) usually
         # initiates from the PRIMARY and wins the race, so a reorder alone won't force

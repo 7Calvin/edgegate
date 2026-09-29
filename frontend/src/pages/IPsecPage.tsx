@@ -610,6 +610,12 @@ export default function IPsecPage() {
 
   const switchBackupMutation = useMutation({
     mutationFn: (id: string) => ipsecApi.switchBackup(id),
+    // Feedback imediato: a troca leva alguns segundos no backend e o menu fecha ao
+    // clicar, então sem isso a tela parece "travada" até efetivar. O toast + o
+    // indicador "Alternando…" na linha (ver render) dão o retorno visual.
+    onMutate: () => {
+      toast({ title: 'Alternando para o backup…', description: 'Aplicando a mudança no túnel — pode levar alguns segundos.' })
+    },
     onSuccess: (res: any) => {
       toast({ title: 'Switch para backup', description: res?.data?.message })
       queryClient.invalidateQueries({ queryKey: ['ipsec-connections'] })
@@ -622,6 +628,9 @@ export default function IPsecPage() {
 
   const rollbackMutation = useMutation({
     mutationFn: (id: string) => ipsecApi.rollbackPrimary(id),
+    onMutate: () => {
+      toast({ title: 'Voltando ao primário…', description: 'Aplicando a mudança no túnel — pode levar alguns segundos.' })
+    },
     onSuccess: (res: any) => {
       toast({ title: 'Rollback para primário', description: res?.data?.message })
       queryClient.invalidateQueries({ queryKey: ['ipsec-connections'] })
@@ -950,6 +959,12 @@ export default function IPsecPage() {
                             const hasBackup = !!conn.right_ip_backup
                             const priActive = hasBackup && active === conn.right_ip
                             const bakActive = hasBackup && active === conn.right_ip_backup
+                            // Uma troca manual (switch/rollback) está em andamento nesta linha?
+                            // O menu fecha ao clicar, então sem esse indicador a tela parece
+                            // travada durante os ~segundos que o backend leva pra efetivar.
+                            const switchingThisRow =
+                              (switchBackupMutation.isPending && switchBackupMutation.variables === conn.id) ||
+                              (rollbackMutation.isPending && rollbackMutation.variables === conn.id)
                             const chip = (
                               <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 align-middle">
                                 ATIVO{conn.prefer_backup ? ' · manual' : ''}
@@ -957,12 +972,17 @@ export default function IPsecPage() {
                             )
                             return (
                               <div>
+                                {switchingThisRow && (
+                                  <p className="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-warning/15 text-warning align-middle">
+                                    <Loader2 className="h-3 w-3 animate-spin" /> Alternando…
+                                  </p>
+                                )}
                                 <p className={priActive ? 'font-semibold' : ''}>
-                                  {conn.right_ip}{priActive && chip}
+                                  {conn.right_ip}{!switchingThisRow && priActive && chip}
                                 </p>
                                 {hasBackup && (
                                   <p className={bakActive ? 'font-semibold' : 'text-muted-foreground'}>
-                                    backup: {conn.right_ip_backup}{bakActive && chip}
+                                    backup: {conn.right_ip_backup}{!switchingThisRow && bakActive && chip}
                                   </p>
                                 )}
                                 <p className="text-muted-foreground">ID: {conn.right_id}</p>
@@ -1129,14 +1149,18 @@ export default function IPsecPage() {
                                         disabled={rollbackMutation.isPending}
                                         onSelect={() => rollbackMutation.mutate(conn.id)}
                                       >
-                                        <Undo2 className="h-4 w-4" /> Rollback para o primário
+                                        {rollbackMutation.isPending && rollbackMutation.variables === conn.id
+                                          ? <><Loader2 className="h-4 w-4 animate-spin" /> Alternando…</>
+                                          : <><Undo2 className="h-4 w-4" /> Rollback para o primário</>}
                                       </DropdownMenuItem>
                                     ) : (
                                       <DropdownMenuItem
                                         disabled={switchBackupMutation.isPending}
                                         onSelect={() => switchBackupMutation.mutate(conn.id)}
                                       >
-                                        <ArrowLeftRight className="h-4 w-4" /> Switch para backup
+                                        {switchBackupMutation.isPending && switchBackupMutation.variables === conn.id
+                                          ? <><Loader2 className="h-4 w-4 animate-spin" /> Alternando…</>
+                                          : <><ArrowLeftRight className="h-4 w-4" /> Switch para backup</>}
                                       </DropdownMenuItem>
                                     )}
                                   </>

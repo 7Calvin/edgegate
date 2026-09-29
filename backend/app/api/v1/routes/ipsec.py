@@ -600,6 +600,14 @@ def _export_fortigate(c, fortios, wan_pri, wan_bak, lan_if, sla_src, lid_pri, li
     # (e.g. a box with an existing SD-WAN member 202 / service 201). The service rule
     # reuses `p` (members and service are separate id namespaces on FortiOS).
     p, s = sdwan_base, sdwan_base + 1
+    # Tunnel-interface IPs (failover only): distinct point-to-point /32 per path so the
+    # FortiGate can ORIGINATE over both tunnels even though they share the same remote-gw
+    # (our peer). With net-device enable + these, the 2nd tunnel encrypts outbound; without
+    # them it stays at enc=0 (validated on homolog vs the production incident). Link-local,
+    # anchored on the (unique-per-export) member ids so two connections don't clash.
+    o1, o2 = (p % 254) + 1, (s % 254) + 1
+    tip1_l, tip1_r = f"169.254.{o1}.1", f"169.254.{o1}.2"
+    tip2_l, tip2_r = f"169.254.{o2}.1", f"169.254.{o2}.2"
 
     lsub = c.left_subnet.split(",")[0].strip()
     rsub = c.right_subnet.split(",")[0].strip()
@@ -800,7 +808,7 @@ config vpn ipsec phase1-interface
         set ike-version 2
         set keylife 28800
         set peertype any
-        set net-device disable
+        set net-device enable
         set proposal {prop_ike}
         set dhgrp {dhgrp}
         set localid "{lid_pri}"
@@ -812,12 +820,26 @@ config vpn ipsec phase1-interface
         set ike-version 2
         set keylife 28800
         set peertype any
-        set net-device disable
+        set net-device enable
         set proposal {prop_ike}
         set dhgrp {dhgrp}
         set localid "{lid_bak}"
         set remote-gw {c.left_id}
         set psksecret {psk}
+    next
+end
+# FIX mesmo-IP-de-peer: IPs de tunel distintos por path. Com o mesmo remote-gw nos dois
+# tuneis, so assim (net-device enable acima + os /32 abaixo) o FortiGate ORIGINA pelos
+# dois. Sem isto o 2o tunel fica em enc=0 (validado). Link-local; a phase1-interface
+# cria a system interface, aqui so setamos o IP.
+config system interface
+    edit "{n1}"
+        set ip {tip1_l} 255.255.255.255
+        set remote-ip {tip1_r} 255.255.255.255
+    next
+    edit "{n2}"
+        set ip {tip2_l} 255.255.255.255
+        set remote-ip {tip2_r} 255.255.255.255
     next
 end
 config vpn ipsec phase2-interface

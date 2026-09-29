@@ -10,6 +10,32 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Corrigido
+- **Export FortiGate (failover): habilita o failover ativo/ativo para o mesmo IP de peer.**
+  Com os dois túneis apontando para o mesmo `remote-gw` (nosso EdgeGate) e `net-device
+  disable`, o FortiGate só originava tráfego pelo 1º túnel — o 2º (backup) recebia mas
+  nunca encriptava a saída (`enc=0`), então o failover não passava dado pelo backup. O
+  export agora emite **`set net-device enable`** nos dois phase1 + um bloco **`config
+  system interface`** com **IPs de túnel `/32` distintos por path** (link-local
+  `169.254.x`), o que dá a cada túnel identidade própria e faz o FortiGate originar pelos
+  dois. Validado em homolog (failover automático + switch manual passando dado pelo
+  backup). O single-link segue `net-device disable` (não há conflito de mesmo-peer).
+- **IPsec route-based: switch manual não re-estabelece mais a SA.** O `set_prefer_backup`
+  chamava o `apply_config()` completo (`swanctl --load-all`), que re-negociava uma SA
+  ociosa/degradada — um blip de ~1s no caminho que estava up (visível ao trocar com o
+  primário fora do ar). Agora o switch route-based faz **apenas o swap de métrica** via
+  `/routebased/apply`, sem reload; ambas as SAs seguem ESTABLISHED (validado: número da
+  SA inalterado através de dois switches).
+
+### Alterado
+- **DPD route-based: 10s → 3s.** Detecta um caminho morto mais rápido, reduzindo a janela
+  de failover automático de ~8s para ~3-4s. Não afeta conexões policy-based.
+- **UI: feedback de progresso no switch manual primário/backup.** O menu fechava ao
+  clicar e a tela só refletia a troca depois de alguns segundos (parecia travado). Agora
+  há toast imediato ("Alternando para o backup…" / "Voltando ao primário…"), um indicador
+  **"Alternando…"** com spinner na linha da conexão enquanto efetiva, e spinner no próprio
+  item do menu.
+
 ## [2.1.1] — 2026-09-29
 
 ### Corrigido
