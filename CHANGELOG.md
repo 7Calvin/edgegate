@@ -10,6 +10,8 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [2.1.0] — 2026-09-29
+
 ### Adicionado
 - **IPsec route-based (interface XFRM) com failover determinístico** — novo modo de
   encaminhamento (`policy` | `route`, **`route` é o default** para novas conexões;
@@ -192,7 +194,8 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 ## [2.0.0] — 2026-08-22
 - **Release público inicial do EdgeGate v2.0.0.**
 
-[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.0.12...HEAD
+[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/7Calvin/edgegate/compare/v2.0.12...v2.1.0
 [2.0.12]: https://github.com/7Calvin/edgegate/compare/v2.0.11...v2.0.12
 [2.0.11]: https://github.com/7Calvin/edgegate/compare/v2.0.10...v2.0.11
 [2.0.10]: https://github.com/7Calvin/edgegate/compare/v2.0.9...v2.0.10
