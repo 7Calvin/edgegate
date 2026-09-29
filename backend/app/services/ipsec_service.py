@@ -601,8 +601,12 @@ class IPsecService:
 
     async def set_prefer_backup(self, name: str, prefer: bool) -> Tuple[bool, str]:
         """Manual failover switch: prefer the backup endpoint (True) or the primary
-        (False). Reorders remote_addrs, reloads, and restarts the tunnel so it
-        re-initiates on the chosen endpoint. Both paths stay available (no blocking)."""
+        (False).
+
+        Route-based: just swaps the route metrics (both XFRM paths stay ESTABLISHED;
+        the active path follows the lower metric) — NO peer-blocking, NO restart.
+        Policy-based: reorders remote_addrs, blocks the primary to force the single SA
+        onto the backup, and restarts to re-initiate."""
         conn = await self.get_connection_by_name(name)
         if not conn:
             return False, f"Connection '{name}' not found"
@@ -614,20 +618,27 @@ class IPsecService:
         conn.prefer_backup = prefer
         await self.db.commit()
 
-        # Reorder remote_addrs (matters when WE initiate).
+        # Apply: for route-based this rewrites the per-if_id metric map AND re-points the
+        # LIVE routes to the new metrics (ipsec-agent /routebased/apply), so the active
+        # path moves by route metric with BOTH SAs staying up.
         ok, err = await self.apply_config()
         if not ok:
             return False, f"Config apply failed: {err}"
 
-        # The peer (e.g. a FortiGate with a conn per IP) usually initiates from the
-        # PRIMARY and wins the race, so a reorder alone won't force the backup. Block
-        # the primary path to force the tunnel onto the backup; unblock to return.
+        # Route-based is done — metric swap already moved the active path; blocking the
+        # primary (the policy-based trick below) would wrongly tear down the primary SA.
+        if getattr(conn, "forwarding_mode", "policy") == "route":
+            return True, f"Now preferring {'backup' if prefer else 'primary'} ({target})"
+
+        # Policy-based only: the peer (e.g. a FortiGate with a conn per IP) usually
+        # initiates from the PRIMARY and wins the race, so a reorder alone won't force
+        # the backup. Block the primary path to force the tunnel onto the backup;
+        # unblock to return, then restart to re-initiate on the chosen endpoint.
         if prefer:
             await self._agent_post(f"/block-peer/{primary}")
         else:
             await self._agent_post(f"/unblock-peer/{primary}")
-
-        await self.restart_connection(name)  # re-initiate on the now-forced endpoint
+        await self.restart_connection(name)
         return True, f"Now preferring {'backup' if prefer else 'primary'} ({target})"
 
     async def test_failover(self, name: str) -> Dict[str, Any]:

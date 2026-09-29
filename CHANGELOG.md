@@ -10,7 +10,19 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-## [2.1.0] — 2026-09-29
+### Corrigido
+- **IPsec route-based: switch manual primário/backup não derruba mais o outro túnel.**
+  O `set_prefer_backup` era do desenho policy-based e, no route-based, chamava
+  `/block-peer` no primário (matando a SA dele) + `restart` — deixando só um caminho up.
+  Agora, para conexões route-based, o switch **apenas troca as métricas** (ambas as SAs
+  seguem ESTABLISHED; o caminho ativo segue a menor métrica), sem bloquear peer nem
+  reiniciar. O caminho policy-based mantém o comportamento antigo.
+- **ipsec-agent: re-prioriza as rotas vivas ao trocar a métrica.** O `/routebased/apply`
+  passava a escrever o novo mapa de métricas, mas as rotas já instaladas mantinham a
+  métrica antiga até o próximo evento de SA — então o switch não movia o tráfego. Agora
+  o agent reconcilia as rotas ativas para as novas métricas (deleta todas antes de
+  re-adicionar, evitando a colisão transitória de `(prefixo, métrica)`), limpa rotas com
+  métrica órfã e é no-op quando já está correto (não flapa).
 
 ### Adicionado
 - **IPsec route-based (interface XFRM) com failover determinístico** — novo modo de

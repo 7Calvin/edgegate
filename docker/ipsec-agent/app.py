@@ -410,7 +410,8 @@ def routebased_apply():
         name, ifid = it.get('ifname'), it.get('if_id')
         if not name or not str(name).startswith(RB_IFACE_PREFIX) or ifid is None:
             return jsonify({'success': False, 'error': f'invalid interface entry: {it}'}), 400
-        desired[name] = {'if_id': int(ifid), 'metric': int(it.get('metric', 100))}
+        desired[name] = {'if_id': int(ifid), 'metric': int(it.get('metric', 100)),
+                         'routes': it.get('routes') or []}
 
     try:
         os.makedirs(os.path.dirname(RB_UPDOWN), exist_ok=True)
@@ -433,6 +434,37 @@ def routebased_apply():
             _ip('link', 'set', nm, 'mtu', str(RB_XFRM_MTU))
             results.append({'ifname': nm, 'if_id': spec['if_id'],
                             'metric': spec['metric'], 'action': 'ready'})
+        # Reconcile LIVE route metrics to the current map. A manual primary/backup
+        # switch only rewrites the metric map; without this the routes installed by
+        # updown keep their OLD metric (so the active path wouldn't move) until the next
+        # CHILD_SA event. Per peer subnet: if the live routes (via UP paths) already
+        # match the desired metrics, do nothing; otherwise delete them ALL first, then
+        # re-add one per up-path at its desired metric. Delete-before-add avoids the
+        # transient (prefix, metric) collision during a swap (the kernel keys a route by
+        # prefix+metric, so two paths can't briefly share a metric). Paths whose child is
+        # down have no route and are left for updown to install at the right metric.
+        cidrs = set()
+        for spec in desired.values():
+            cidrs.update(spec.get('routes', []))
+        for cidr in cidrs:
+            rows = []  # (nm, metric) of current routes for cidr via a managed interface
+            for ln in (_ip('route', 'show', cidr).stdout or '').splitlines():
+                t = ln.split()
+                if 'dev' in t and 'metric' in t and t[t.index('dev') + 1] in desired:
+                    rows.append((t[t.index('dev') + 1], t[t.index('metric') + 1]))
+            if not rows:
+                continue
+            up = []  # distinct up interfaces, in order
+            for nm, _m in rows:
+                if nm not in up:
+                    up.append(nm)
+            want = {nm: str(desired[nm]['metric']) for nm in up}
+            if len(rows) == len(up) and all(m == want[nm] for nm, m in rows):
+                continue  # already correct — no-op (don't flap on every apply)
+            for nm, m in rows:
+                _ip('route', 'del', cidr, 'dev', nm, 'metric', m)
+            for nm in up:
+                _ip('route', 'add', cidr, 'dev', nm, 'metric', want[nm])
         return jsonify({'success': True, 'phys': phys, 'interfaces': results})
     except Exception as e:  # noqa: BLE001
         return jsonify({'success': False, 'error': str(e)}), 500
