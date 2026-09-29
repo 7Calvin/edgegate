@@ -10,89 +10,67 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-### Corrigido
-- **Export FortiGate (failover): habilita o failover ativo/ativo para o mesmo IP de peer.**
-  Com os dois túneis apontando para o mesmo `remote-gw` (nosso EdgeGate) e `net-device
-  disable`, o FortiGate só originava tráfego pelo 1º túnel — o 2º (backup) recebia mas
-  nunca encriptava a saída (`enc=0`), então o failover não passava dado pelo backup. O
-  export agora emite **`set net-device enable`** nos dois phase1 + um bloco **`config
-  system interface`** com **IPs de túnel `/32` distintos por path** (link-local
-  `169.254.x`), o que dá a cada túnel identidade própria e faz o FortiGate originar pelos
-  dois. Validado em homolog (failover automático + switch manual passando dado pelo
-  backup). O single-link segue `net-device disable` (não há conflito de mesmo-peer).
-- **IPsec route-based: switch manual não re-estabelece mais a SA.** O `set_prefer_backup`
-  chamava o `apply_config()` completo (`swanctl --load-all`), que re-negociava uma SA
-  ociosa/degradada — um blip de ~1s no caminho que estava up (visível ao trocar com o
-  primário fora do ar). Agora o switch route-based faz **apenas o swap de métrica** via
-  `/routebased/apply`, sem reload; ambas as SAs seguem ESTABLISHED (validado: número da
-  SA inalterado através de dois switches).
-
-### Alterado
-- **DPD route-based: 10s → 3s.** Detecta um caminho morto mais rápido, reduzindo a janela
-  de failover automático de ~8s para ~3-4s. Não afeta conexões policy-based.
-- **UI: feedback de progresso no switch manual primário/backup.** O menu fechava ao
-  clicar e a tela só refletia a troca depois de alguns segundos (parecia travado). Agora
-  há toast imediato ("Alternando para o backup…" / "Voltando ao primário…"), um indicador
-  **"Alternando…"** com spinner na linha da conexão enquanto efetiva, e spinner no próprio
-  item do menu.
-
-## [2.1.1] — 2026-09-29
-
-### Corrigido
-- **IPsec route-based: switch manual primário/backup não derruba mais o outro túnel.**
-  O `set_prefer_backup` era do desenho policy-based e, no route-based, chamava
-  `/block-peer` no primário (matando a SA dele) + `restart` — deixando só um caminho up.
-  Agora, para conexões route-based, o switch **apenas troca as métricas** (ambas as SAs
-  seguem ESTABLISHED; o caminho ativo segue a menor métrica), sem bloquear peer nem
-  reiniciar. O caminho policy-based mantém o comportamento antigo.
-- **ipsec-agent: re-prioriza as rotas vivas ao trocar a métrica.** O `/routebased/apply`
-  passava a escrever o novo mapa de métricas, mas as rotas já instaladas mantinham a
-  métrica antiga até o próximo evento de SA — então o switch não movia o tráfego. Agora
-  o agent reconcilia as rotas ativas para as novas métricas (deleta todas antes de
-  re-adicionar, evitando a colisão transitória de `(prefixo, métrica)`), limpa rotas com
-  métrica órfã e é no-op quando já está correto (não flapa).
-
-## [2.1.0] — 2026-09-29
+> **Release consolidado do IPsec route-based/failover (destino: 2.2.0).** As versões
+> 2.1.0 e 2.1.1 foram publicadas e **retiradas antes de qualquer distribuição** (ninguém
+> as recebeu); todo o conteúdo delas está descrito aqui, já com as correções aplicadas.
 
 ### Adicionado
 - **IPsec route-based (interface XFRM) com failover determinístico** — novo modo de
-  encaminhamento (`policy` | `route`, **`route` é o default** para novas conexões;
-  as existentes seguem `policy`). Cada endpoint do peer vira uma conn própria
-  (`<nome>-p` / `<nome>-b`) amarrada a um `if_id` e a uma interface `eg-<if_id>`; o
-  primário/backup é escolhido por **métrica de rota**, e um hook `updown` gerencia a
-  rota na subida/queda da SA. Resolve a oscilação em que os dois túneis do peer
-  compartilhavam um único reqid/policy e o caminho ativo trocava a cada rekey.
+  encaminhamento (`policy` | `route`, **`route` é o default** para novas conexões; as
+  existentes seguem `policy`). Cada endpoint do peer vira uma conn própria (`<nome>-p` /
+  `<nome>-b`) amarrada a um `if_id` e a uma interface `eg-<if_id>`; o primário/backup é
+  escolhido por **métrica de rota**, com um hook `updown` que gerencia a rota na
+  subida/queda da SA. Resolve a oscilação em que os dois túneis do peer compartilhavam um
+  único reqid/policy e o caminho ativo trocava a cada rekey.
   - Model: colunas `forwarding_mode` + `if_id_base`; `to_swanctl_routebased()`,
-    `xfrm_ifaces()`; migration `017` (idempotente, `server_default='policy'`
-    preserva as conexões existentes).
-  - Service: `generate_swanctl_config` escolhe route/policy por conexão;
-    `apply_config` reconcilia as interfaces XFRM via agent antes do reload;
-    `_allocate_if_id_base()`; start/stop/status cientes das sub-conns `-p`/`-b`.
-  - ipsec-agent: `POST /routebased/apply` (cria/limpa interfaces XFRM + updown +
-    mapa de métricas) e `POST /routebased/active` (caminho ativo por métrica).
-- **Gating por vendor (tipo de firewall)** — novo campo **"Tipo de firewall"**
-  (FortiGate | Outro) que **deriva** o modo de encaminhamento e as capacidades:
-  FortiGate → route-based + dual-link (2º WAN) + export FortiGate; Outro →
-  policy-based, single-link. O antigo seletor "Modo de encaminhamento" saiu da UI
-  (agora é derivado do vendor). Migration `018` (`vendor`, `server_default='generic'`,
-  backfill `fortigate` onde `forwarding_mode='route'`) preserva as conexões existentes.
+    `xfrm_ifaces()`; migrations `017`/`018` (idempotentes, `server_default` preserva as
+    conexões existentes).
+  - Service: `generate_swanctl_config` escolhe route/policy por conexão; `apply_config`
+    reconcilia as interfaces XFRM via agent antes do reload; start/stop/status cientes
+    das sub-conns `-p`/`-b`.
+  - ipsec-agent: `POST /routebased/apply` (cria/limpa interfaces XFRM + updown + mapa de
+    métricas, reconciliando as rotas vivas) e `POST /routebased/active` (caminho ativo).
+- **Gating por vendor (tipo de firewall)** — campo **"Tipo de firewall"** (FortiGate |
+  Outro) que **deriva** o modo de encaminhamento e as capacidades: FortiGate →
+  route-based + dual-link (2º WAN) + export FortiGate; Outro → policy-based, single-link.
+- **Switch manual primário/backup** (route-based) — troca o caminho ativo por **swap de
+  métrica** (via `/routebased/apply`), sem bloquear peer e **sem reload**: as duas SAs
+  seguem ESTABLISHED, sem derrubar nem re-negociar o túnel. UI com toast imediato e
+  indicador **"Alternando…"** (spinner) na linha enquanto efetiva.
 - **Formulário de IPsec em painéis colapsáveis** (Network · Authentication · Fase 1 ·
-  Fase 2 · Avançado), estilo FortiGate, com o Gateway Local **auto-detectado** e o
-  link de backup (2º WAN) num toggle — visível só para FortiGate.
+  Fase 2 · Avançado), estilo FortiGate, com o Gateway Local **auto-detectado** e o link
+  de backup (2º WAN) num toggle — visível só para FortiGate.
 
-### Alterado
-- **Export FortiGate: base de IDs do SD-WAN parametrizável (`sdwan_base`)** — deixa
-  de usar IDs fixos (201/202) que sobrescreviam um SD-WAN existente; agora members =
-  `base`/`base+1` e service = `base` (campo no modal de export). Também emite limiares
-  de SLA realistas (loss/latency/jitter) e `link-cost-factor packet-loss`.
+### Export FortiGate
+- **Failover ativo/ativo para o mesmo IP de peer.** Com os dois túneis apontando para o
+  mesmo `remote-gw` (nosso EdgeGate) e `net-device disable`, o FortiGate só originava pelo
+  1º túnel — o 2º (backup) recebia mas nunca encriptava a saída (`enc=0`) e o failover não
+  passava dado pelo backup. O export (modo failover) agora emite **`set net-device
+  enable`** nos dois phase1 + um bloco **`config system interface`** com **IPs de túnel
+  `/32` distintos por path** (link-local `169.254.x`), dando identidade própria a cada
+  túnel. Single-link segue `net-device disable` (sem conflito de mesmo-peer). Validado em
+  homolog (failover automático ~3-4s + switch manual, passando dado pelo backup).
+- **Base de IDs do SD-WAN parametrizável (`sdwan_base`)** — não sobrescreve mais um SD-WAN
+  existente (members `base`/`base+1`, service `base`); emite limiares de SLA realistas
+  (loss/latency/jitter) e `link-cost-factor packet-loss`.
 
 ### Corrigido
-- **DPD:** `dpd_action` agora emite o valor canônico do swanctl (`start`) em vez de
-  `restart` (não-canônico; o 6.0.4 tolerava, mas outras versões poderiam ignorar e
-  ficar sem failover).
-- **Bytes 0 B** no detalhe da conexão e no dashboard de banda — o regex de parsing
-  não casava a linha de SA route-based (anotação de `if_id`).
+- **DPD:** emite o valor canônico do swanctl (`start`, não `restart`) e usa
+  `dpd_delay = 3s` no route-based → failover automático em ~3-4s (era ~8s). Não afeta
+  policy-based.
+- **Bytes 0 B** no detalhe da conexão e no dashboard de banda — o parser não casava a
+  linha de SA route-based (anotação de `if_id`).
 - Botão de refresh do status sem feedback visual (agora com spinner/disabled).
+
+## [2.1.1] — 2026-09-29 [RETIRADA]
+
+Publicada e **retirada** antes de qualquer distribuição (ninguém a recebeu). Conteúdo
+consolidado na seção **[Não lançado] → 2.2.0** acima.
+
+## [2.1.0] — 2026-09-29 [RETIRADA]
+
+Publicada e **retirada** antes de qualquer distribuição (ninguém a recebeu). Conteúdo
+consolidado na seção **[Não lançado] → 2.2.0** acima.
 
 ## [2.0.12] — 2026-09-14
 ### Corrigido
