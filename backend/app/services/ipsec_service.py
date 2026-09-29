@@ -13,7 +13,9 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-from app.models.ipsec import IPsecConnection, IPsecStatus
+from app.models.ipsec import (
+    IPsecConnection, IPsecStatus, DEFAULT_VENDOR, vendor_caps,
+)
 from app.models.user import User
 from app.schemas.ipsec import IPsecConnectionCreate, IPsecConnectionUpdate
 
@@ -92,9 +94,18 @@ class IPsecService:
         if data.auth_method == "psk" and not data.psk:
             return None, "PSK (Pre-Shared Key) is required for PSK authentication"
 
+        # Vendor drives the connection's capabilities: forwarding_mode is DERIVED from
+        # the vendor (the incoming forwarding_mode is ignored), and dual-link/backup is
+        # only allowed for vendors that support it. This keeps advanced/route-based
+        # behaviour scoped to validated vendors (FortiGate) — see VENDOR_CAPABILITIES.
+        vendor = (getattr(data, "vendor", DEFAULT_VENDOR) or DEFAULT_VENDOR)
+        caps = vendor_caps(vendor)
+        forwarding_mode = caps["forwarding_mode"]
+        # Vendor without dual-link support -> ignore any submitted backup endpoint.
+        right_ip_backup = data.right_ip_backup if caps["dual_link"] else None
+
         # Route-based connections need a globally-unique base XFRM if_id (primary=base,
         # backup=base+1). Allocate it up front so config generation has it.
-        forwarding_mode = getattr(data, "forwarding_mode", "policy") or "policy"
         if_id_base = await self._allocate_if_id_base() if forwarding_mode == "route" else None
 
         connection = IPsecConnection(
@@ -104,7 +115,7 @@ class IPsecService:
             left_subnet=data.left_subnet,
             left_id=data.left_id,
             right_ip=data.right_ip,
-            right_ip_backup=data.right_ip_backup,
+            right_ip_backup=right_ip_backup,
             right_subnet=data.right_subnet,
             right_id=data.right_id or data.right_ip,  # default the peer ID to its IP
             auth_method=data.auth_method,
@@ -117,6 +128,7 @@ class IPsecService:
             auto_start=data.auto_start,
             dpd_action=data.dpd_action,
             is_enabled=data.is_enabled,
+            vendor=vendor,
             forwarding_mode=forwarding_mode,
             if_id_base=if_id_base,
             status=IPsecStatus.INACTIVE,
@@ -145,10 +157,23 @@ class IPsecService:
             if existing:
                 return connection, f"Connection with name '{update_data['name']}' already exists"
 
+        # forwarding_mode is derived from vendor, never set directly via the API — drop
+        # any incoming value so it can't diverge from the vendor's capabilities.
+        update_data.pop("forwarding_mode", None)
+
         for field, value in update_data.items():
             setattr(connection, field, value)
 
-        # Switching to route-based (or already route) with no if_id_base yet -> allocate.
+        # If the vendor changed (or on any update, to stay coherent), re-derive
+        # forwarding_mode + dual-link from the vendor's capabilities.
+        caps = vendor_caps(getattr(connection, "vendor", DEFAULT_VENDOR))
+        connection.forwarding_mode = caps["forwarding_mode"]
+        if not caps["dual_link"]:
+            # Vendor doesn't support dual-link -> drop any backup endpoint.
+            connection.right_ip_backup = None
+            connection.prefer_backup = False
+
+        # Route-based (or switched to route) with no if_id_base yet -> allocate.
         if getattr(connection, "forwarding_mode", "policy") == "route" \
                 and getattr(connection, "if_id_base", None) is None:
             connection.if_id_base = await self._allocate_if_id_base()

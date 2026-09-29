@@ -43,6 +43,7 @@ import {
   MoreVertical,
   Download,
   Copy,
+  ChevronRight,
 } from 'lucide-react'
 import type { IPsecConnection, IPsecStatus, IPsecConnectionCreate } from '@/types'
 
@@ -65,6 +66,7 @@ interface ConnectionForm {
   key_lifetime: string
   auto_start: boolean
   dpd_action: string
+  vendor: string
   forwarding_mode: string
   is_enabled: boolean
 }
@@ -88,9 +90,12 @@ const DPD_ACTION_OPTIONS = [
   { value: 'none', label: 'None - Desabilitar DPD' },
 ]
 
-const FORWARDING_MODE_OPTIONS = [
-  { value: 'route', label: 'Route-based (Recomendado - XFRM, failover determinístico)' },
-  { value: 'policy', label: 'Policy-based (legado)' },
+// Peer firewall type. Drives forwarding mode + dual-link + export template — the
+// user picks the vendor and the backend derives the rest (see VENDOR_CAPABILITIES).
+// Only validated vendors expose advanced (route-based/dual-link) behaviour.
+const VENDOR_OPTIONS = [
+  { value: 'fortigate', label: 'FortiGate' },
+  { value: 'generic', label: 'Outro' },
 ]
 
 const IKE_CIPHER_PRESETS = [
@@ -126,9 +131,249 @@ const createInitialForm = (serverInfo?: ServerInfo): ConnectionForm => ({
   key_lifetime: '1h',
   auto_start: true,
   dpd_action: 'restart',
+  vendor: 'fortigate',
   forwarding_mode: 'route',
   is_enabled: true,
 })
+
+// Collapsible config panel — FortiGate-wizard style. Shows a short summary of the
+// current values when collapsed; expands on click. Network/Authentication open by
+// default; the crypto phases start collapsed.
+function CollapsibleSection({
+  title, summary, defaultOpen = false, children,
+}: {
+  title: string
+  summary?: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="border rounded-lg overflow-hidden">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/40 transition-colors"
+      >
+        <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform ${open ? 'rotate-90 text-primary' : ''}`} />
+        <span className={`text-sm font-semibold uppercase tracking-wide ${open ? 'text-primary' : 'text-muted-foreground'}`}>{title}</span>
+        {!open && summary && (
+          <span className="ml-auto text-xs font-mono text-muted-foreground truncate max-w-[55%]">{summary}</span>
+        )}
+      </button>
+      {open && <div className="px-4 pb-4 pt-1 space-y-4 border-t bg-muted/20">{children}</div>}
+    </div>
+  )
+}
+
+// Shared body of the add/edit IPsec forms. Vendor selector at the top gates the
+// backup/dual-link fields (only for FortiGate); the rest is organized into
+// collapsible panels. `idPrefix` keeps input ids unique between the two modals.
+function IPsecFormFields({
+  idPrefix, isEdit, formData, updateField, showBackup, setShowBackup, serverInfo,
+}: {
+  idPrefix: string
+  isEdit: boolean
+  formData: ConnectionForm
+  updateField: (field: keyof ConnectionForm, value: string | boolean) => void
+  showBackup: boolean
+  setShowBackup: (v: boolean) => void
+  serverInfo?: ServerInfo
+}) {
+  const isFortigate = formData.vendor === 'fortigate'
+
+  const onVendorChange = (v: string) => {
+    updateField('vendor', v)
+    if (v === 'fortigate') {
+      updateField('forwarding_mode', 'route')
+    } else {
+      // Non-validated vendor -> simple/safe path: policy-based, no dual-link.
+      updateField('forwarding_mode', 'policy')
+      setShowBackup(false)
+      updateField('right_ip_backup', '')
+    }
+  }
+
+  const ike = formData.ike_version === 'ikev1' ? 'IKEv1' : 'IKEv2'
+  const auth = formData.auth_method === 'pubkey' ? 'Certificado' : 'PSK'
+
+  return (
+    <div className="space-y-5 mt-4">
+      {/* Vendor selector (fixed, top) */}
+      <div className="space-y-2">
+        <Label>Tipo de firewall (peer)</Label>
+        <div className="inline-flex rounded-lg border bg-muted/40 p-1 gap-1">
+          {VENDOR_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              aria-pressed={formData.vendor === opt.value}
+              onClick={() => onVendorChange(opt.value)}
+              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                formData.vendor === opt.value
+                  ? 'bg-primary/15 text-primary shadow-[inset_0_0_0_1px] shadow-primary/40'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Name / description (fixed, top) */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-name`}>Nome da Conexão *</Label>
+          <Input id={`${idPrefix}-name`} value={formData.name} onChange={(e) => updateField('name', e.target.value)} placeholder="IPSECtoOffice" />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-description`}>Descrição</Label>
+          <Input id={`${idPrefix}-description`} value={formData.description} onChange={(e) => updateField('description', e.target.value)} placeholder="VPN para o escritório principal" />
+        </div>
+      </div>
+
+      {/* NETWORK */}
+      <CollapsibleSection title="Network" defaultOpen summary={`${formData.right_ip || '—'} → ${formData.right_subnet || '—'}`}>
+        {/* Local gateway (auto-detected) */}
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Gateway Local (Este Servidor)</h4>
+          {serverInfo?.private_ip && (isEdit ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => {
+              updateField('left_ip', serverInfo.private_ip || '')
+              updateField('left_subnet', serverInfo.local_subnet || '')
+              updateField('left_id', serverInfo.public_ip || '')
+            }}>
+              <RefreshCw className="h-3 w-3 mr-1" /> Detectar automaticamente
+            </Button>
+          ) : (
+            <span className="text-xs text-success bg-success/10 px-2 py-1 rounded">Detectado automaticamente</span>
+          ))}
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-left_ip`}>IP Privado</Label>
+            <Input id={`${idPrefix}-left_ip`} value={formData.left_ip} onChange={(e) => updateField('left_ip', e.target.value)} placeholder="10.30.1.254" className="bg-background" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-left_subnet`}>Sub-rede Local</Label>
+            <Input id={`${idPrefix}-left_subnet`} value={formData.left_subnet} onChange={(e) => updateField('left_subnet', e.target.value)} placeholder="10.30.0.0/16" className="bg-background" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-left_id`}>IP Público / ID</Label>
+            <Input id={`${idPrefix}-left_id`} value={formData.left_id} onChange={(e) => updateField('left_id', e.target.value)} placeholder="54.94.19.176" className="bg-background" />
+          </div>
+        </div>
+
+        {/* Remote gateway */}
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Gateway Remoto (Peer)</h4>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-right_ip`}>IP Público (primário) *</Label>
+            <Input id={`${idPrefix}-right_ip`} value={formData.right_ip} onChange={(e) => updateField('right_ip', e.target.value)} placeholder="187.92.78.242" />
+            <p className="text-xs text-muted-foreground">IP público do peer remoto</p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-right_id`}>ID do Peer</Label>
+            <Input id={`${idPrefix}-right_id`} value={formData.right_id} onChange={(e) => updateField('right_id', e.target.value)} placeholder="ex: matriz-fw ou vpn.cliente.com" />
+            <p className="text-xs text-muted-foreground">Nome/FQDN (ex: matriz-fw) ou o IP. Vale para primário e backup.</p>
+          </div>
+        </div>
+        {/* Backup link — switch-style toggle (matches the approved mock) */}
+        {isFortigate && (
+          <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/40 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground">Link de backup (2º WAN)</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Segundo endpoint do peer para failover. Pode entrar agora ou depois — a inclusão é aditiva, sem derrubar o túnel primário.</p>
+            </div>
+            <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+              <input type="checkbox" className="peer sr-only" checked={showBackup} onChange={(e) => {
+                const on = e.target.checked
+                setShowBackup(on)
+                if (!on) updateField('right_ip_backup', '')
+              }} />
+              <span className="relative block h-6 w-[42px] rounded-full bg-muted-foreground/30 transition-colors peer-checked:bg-primary after:absolute after:left-[3px] after:top-[3px] after:h-[18px] after:w-[18px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-[18px] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary" />
+            </label>
+          </div>
+        )}
+        {isFortigate && showBackup && (
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-right_ip_backup`}>IP do peer — backup (2º WAN)</Label>
+            <Input id={`${idPrefix}-right_ip_backup`} value={formData.right_ip_backup} onChange={(e) => updateField('right_ip_backup', e.target.value)} placeholder="2º IP do peer" />
+            <p className="text-xs text-muted-foreground">Primário → métrica 100 · Backup → métrica 200. Failover só em falha real (DPD).</p>
+          </div>
+        )}
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-right_subnet`}>Sub-rede(s) Remota(s) *</Label>
+          <Input id={`${idPrefix}-right_subnet`} value={formData.right_subnet} onChange={(e) => updateField('right_subnet', e.target.value)} placeholder="10.0.0.0/24, 192.168.1.0/24" />
+          <p className="text-xs text-muted-foreground">Use vírgula para separar múltiplas sub-redes</p>
+        </div>
+      </CollapsibleSection>
+
+      {/* AUTHENTICATION */}
+      <CollapsibleSection title="Authentication" defaultOpen summary={`${auth} · ${ike}`}>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-ike_version`}>Versão IKE</Label>
+            <Select id={`${idPrefix}-ike_version`} value={formData.ike_version} onChange={(e) => updateField('ike_version', e.target.value)} options={IKE_VERSION_OPTIONS} />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-psk`}>Chave Pré-Compartilhada (PSK){isEdit ? '' : ' *'}</Label>
+          <Input id={`${idPrefix}-psk`} type="password" value={formData.psk} onChange={(e) => updateField('psk', e.target.value)} placeholder={isEdit ? 'Deixe ******** para manter a atual' : 'Digite um segredo compartilhado forte'} />
+          <p className="text-xs text-muted-foreground">{isEdit ? 'Deixe como ******** para manter a chave atual.' : 'Mínimo de 8 caracteres. Deve corresponder em ambos os lados.'}</p>
+        </div>
+      </CollapsibleSection>
+
+      {/* PHASE 1 */}
+      <CollapsibleSection title="Fase 1 · Proposta IKE" summary={`${formData.ike_cipher} · ${formData.ike_lifetime}`}>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-ike_cipher`}>Cifra IKE (Fase 1)</Label>
+            <Select id={`${idPrefix}-ike_cipher`} value={formData.ike_cipher} onChange={(e) => updateField('ike_cipher', e.target.value)} options={IKE_CIPHER_PRESETS} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-ike_lifetime`}>Tempo de Vida IKE</Label>
+            <Input id={`${idPrefix}-ike_lifetime`} value={formData.ike_lifetime} onChange={(e) => updateField('ike_lifetime', e.target.value)} placeholder="8h" />
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* PHASE 2 */}
+      <CollapsibleSection title="Fase 2 · Proposta ESP" summary={`${formData.esp_cipher} · ${formData.key_lifetime}`}>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-esp_cipher`}>Cifra ESP (Fase 2)</Label>
+            <Select id={`${idPrefix}-esp_cipher`} value={formData.esp_cipher} onChange={(e) => updateField('esp_cipher', e.target.value)} options={ESP_CIPHER_PRESETS} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-key_lifetime`}>Tempo de Vida da Chave</Label>
+            <Input id={`${idPrefix}-key_lifetime`} value={formData.key_lifetime} onChange={(e) => updateField('key_lifetime', e.target.value)} placeholder="1h" />
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* ADVANCED */}
+      <CollapsibleSection title="Avançado" summary={`DPD ${formData.dpd_action} · ${formData.auto_start ? 'auto-start on' : 'auto-start off'} · ${formData.is_enabled ? 'habilitada' : 'desabilitada'}`}>
+        <div className="space-y-2 md:max-w-sm">
+          <Label htmlFor={`${idPrefix}-dpd_action`}>Ação DPD</Label>
+          <Select id={`${idPrefix}-dpd_action`} value={formData.dpd_action} onChange={(e) => updateField('dpd_action', e.target.value)} options={DPD_ACTION_OPTIONS} />
+        </div>
+        <div className="flex items-center gap-6">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={formData.auto_start} onChange={(e) => updateField('auto_start', e.target.checked)} className="rounded" />
+            <span className="text-sm">Iniciar automaticamente no boot</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={formData.is_enabled} onChange={(e) => updateField('is_enabled', e.target.checked)} className="rounded" />
+            <span className="text-sm">Habilitado</span>
+          </label>
+        </div>
+      </CollapsibleSection>
+    </div>
+  )
+}
 
 export default function IPsecPage() {
   const queryClient = useQueryClient()
@@ -488,8 +733,11 @@ export default function IPsecPage() {
     }
     if (formData.auto_start !== (orig.auto_start ?? true)) updateData.auto_start = formData.auto_start
     if (formData.is_enabled !== (orig.is_enabled ?? true)) updateData.is_enabled = formData.is_enabled
-    if (formData.forwarding_mode !== ((orig as unknown as Record<string, unknown>).forwarding_mode ?? 'policy'))
-      updateData.forwarding_mode = formData.forwarding_mode
+    // Vendor drives forwarding_mode + dual-link (derived server-side); send the vendor,
+    // never forwarding_mode directly.
+    const origVendor = (orig as unknown as Record<string, string>).vendor
+      || (((orig as unknown as Record<string, string>).forwarding_mode === 'route') ? 'fortigate' : 'generic')
+    if (formData.vendor !== origVendor) (updateData as Record<string, unknown>).vendor = formData.vendor
     if (formData.psk && formData.psk !== '********') updateData.psk = formData.psk
 
     if (Object.keys(updateData).length === 0) {
@@ -529,6 +777,10 @@ export default function IPsecPage() {
       key_lifetime: conn.key_lifetime || '1h',
       auto_start: conn.auto_start ?? true,
       dpd_action: conn.dpd_action || 'restart',
+      // Vendor drives the form; fall back to inferring it from an existing conn that
+      // predates the vendor column (route-based => it was a FortiGate).
+      vendor: (conn as unknown as Record<string, string>).vendor
+        || (((conn as unknown as Record<string, string>).forwarding_mode === 'route') ? 'fortigate' : 'generic'),
       forwarding_mode: (conn as unknown as Record<string, string>).forwarding_mode || 'policy',
       is_enabled: conn.is_enabled ?? true,
     })
@@ -839,8 +1091,11 @@ export default function IPsecPage() {
                                   <FileText className="h-4 w-4" /> Ver logs
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onSelect={() => {
+                                  const cv = (conn as unknown as Record<string, string>).vendor
+                                    || (((conn as unknown as Record<string, string>).forwarding_mode === 'route') ? 'fortigate' : 'generic')
                                   setExportForm((f) => ({
                                     ...f,
+                                    target: cv === 'fortigate' ? 'fortigate' : 'generic',
                                     base: (conn.name || '').replace(/[^A-Za-z0-9-]/g, '').replace(/^-+|-+$/g, '').slice(0, 12),
                                     client_lan: conn.right_subnet || '',
                                   }))
@@ -915,261 +1170,7 @@ export default function IPsecPage() {
             <DialogDescription>Configure um novo túnel VPN IPsec site-to-site</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleCreateConnection}>
-            <div className="space-y-6 mt-4">
-              {/* Connection Details */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Detalhes da Conexão</h3>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="add-name">Nome da Conexão *</Label>
-                    <Input
-                      id="add-name"
-                      value={formData.name}
-                      onChange={(e) => updateField('name', e.target.value)}
-                      placeholder="IPSECtoOffice"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-description">Descrição</Label>
-                    <Input
-                      id="add-description"
-                      value={formData.description}
-                      onChange={(e) => updateField('description', e.target.value)}
-                      placeholder="VPN para o escritório principal"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Local Gateway */}
-              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Gateway Local (Este Servidor)</h3>
-                  {serverInfo?.private_ip && (
-                    <span className="text-xs text-success bg-success/10 px-2 py-1 rounded">Detectado automaticamente</span>
-                  )}
-                </div>
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="add-left_ip">IP Privado</Label>
-                    <Input
-                      id="add-left_ip"
-                      value={formData.left_ip}
-                      onChange={(e) => updateField('left_ip', e.target.value)}
-                      placeholder="10.30.1.254"
-                      className="bg-background"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-left_subnet">Sub-rede Local</Label>
-                    <Input
-                      id="add-left_subnet"
-                      value={formData.left_subnet}
-                      onChange={(e) => updateField('left_subnet', e.target.value)}
-                      placeholder="10.30.0.0/16"
-                      className="bg-background"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-left_id">IP Público / ID</Label>
-                    <Input
-                      id="add-left_id"
-                      value={formData.left_id}
-                      onChange={(e) => updateField('left_id', e.target.value)}
-                      placeholder="54.94.19.176"
-                      className="bg-background"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Remote Gateway */}
-              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Gateway Remoto (Peer)</h3>
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-foreground">
-                    <input
-                      type="checkbox"
-                      checked={showBackup}
-                      onChange={(e) => {
-                        const on = e.target.checked
-                        setShowBackup(on)
-                        if (!on) updateField('right_ip_backup', '')
-                      }}
-                      className="rounded"
-                    />
-                    <span>Habilitar link de backup — failover (homologado em FortiGate)</span>
-                  </label>
-                </div>
-                {showBackup && (
-                  <p className="text-xs text-amber-600 dark:text-amber-500">
-                    ⚠ Failover com 2 links (primário + backup) é homologado apenas em <strong>FortiGate</strong>. Em pfSense, Endian ou outros equipamentos, use só o link primário.
-                  </p>
-                )}
-                {/* Linha 1 — só os IPs (primário e, se habilitado, o backup) */}
-                <div className={`grid gap-4 ${showBackup ? 'md:grid-cols-2' : 'md:grid-cols-1'}`}>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-right_ip">IP Público (primário) *</Label>
-                    <Input
-                      id="add-right_ip"
-                      value={formData.right_ip}
-                      onChange={(e) => updateField('right_ip', e.target.value)}
-                      placeholder="187.92.78.242"
-                    />
-                    <p className="text-xs text-muted-foreground">IP público do peer remoto</p>
-                  </div>
-                  {showBackup && (
-                    <div className="space-y-2">
-                      <Label htmlFor="add-right_ip_backup">IP de Backup (failover)</Label>
-                      <Input
-                        id="add-right_ip_backup"
-                        value={formData.right_ip_backup}
-                        onChange={(e) => updateField('right_ip_backup', e.target.value)}
-                        placeholder="2º IP do peer"
-                      />
-                      <p className="text-xs text-muted-foreground">2º IP fixo do peer p/ failover (HA)</p>
-                    </div>
-                  )}
-                </div>
-                {/* Linha 2 — Peer ID (um nome/FQDN; não precisa ser IP) */}
-                <div className="space-y-2">
-                  <Label htmlFor="add-right_id">ID do Peer</Label>
-                  <Input
-                    id="add-right_id"
-                    value={formData.right_id}
-                    onChange={(e) => updateField('right_id', e.target.value)}
-                    placeholder="ex: matriz-fw ou vpn.cliente.com"
-                  />
-                  <p className="text-xs text-muted-foreground">Pode ser um nome/FQDN (ex: matriz-fw, vpn.cliente.com) ou o IP. O mesmo ID vale para o link primário e o backup.</p>
-                </div>
-                {/* Linha 3 — sub-rede(s) remota(s) */}
-                <div className="space-y-2">
-                  <Label htmlFor="add-right_subnet">Sub-rede(s) Remota(s) *</Label>
-                  <Input
-                    id="add-right_subnet"
-                    value={formData.right_subnet}
-                    onChange={(e) => updateField('right_subnet', e.target.value)}
-                    placeholder="10.0.0.0/24, 192.168.1.0/24"
-                  />
-                  <p className="text-xs text-muted-foreground">Use vírgula para separar múltiplas sub-redes</p>
-                </div>
-              </div>
-
-              {/* Authentication */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Autenticação</h3>
-                <div className="space-y-2">
-                  <Label htmlFor="add-psk">Chave Pré-Compartilhada (PSK) *</Label>
-                  <Input
-                    id="add-psk"
-                    type="password"
-                    value={formData.psk}
-                    onChange={(e) => updateField('psk', e.target.value)}
-                    placeholder="Digite um segredo compartilhado forte"
-                  />
-                  <p className="text-xs text-muted-foreground">Mínimo de 8 caracteres. Deve corresponder em ambos os lados.</p>
-                </div>
-              </div>
-
-              {/* Encryption Settings */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Configurações de Criptografia</h3>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="add-ike_version">Versão IKE</Label>
-                    <Select
-                      id="add-ike_version"
-                      value={formData.ike_version}
-                      onChange={(e) => updateField('ike_version', e.target.value)}
-                      options={IKE_VERSION_OPTIONS}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-dpd_action">Ação DPD</Label>
-                    <Select
-                      id="add-dpd_action"
-                      value={formData.dpd_action}
-                      onChange={(e) => updateField('dpd_action', e.target.value)}
-                      options={DPD_ACTION_OPTIONS}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-forwarding_mode">Modo de encaminhamento</Label>
-                    <Select
-                      id="add-forwarding_mode"
-                      value={formData.forwarding_mode}
-                      onChange={(e) => updateField('forwarding_mode', e.target.value)}
-                      options={FORWARDING_MODE_OPTIONS}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="add-ike_cipher">Cifra IKE (Fase 1)</Label>
-                    <Select
-                      id="add-ike_cipher"
-                      value={formData.ike_cipher}
-                      onChange={(e) => updateField('ike_cipher', e.target.value)}
-                      options={IKE_CIPHER_PRESETS}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-esp_cipher">Cifra ESP (Fase 2)</Label>
-                    <Select
-                      id="add-esp_cipher"
-                      value={formData.esp_cipher}
-                      onChange={(e) => updateField('esp_cipher', e.target.value)}
-                      options={ESP_CIPHER_PRESETS}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="add-ike_lifetime">Tempo de Vida IKE</Label>
-                    <Input
-                      id="add-ike_lifetime"
-                      value={formData.ike_lifetime}
-                      onChange={(e) => updateField('ike_lifetime', e.target.value)}
-                      placeholder="8h"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-key_lifetime">Tempo de Vida da Chave</Label>
-                    <Input
-                      id="add-key_lifetime"
-                      value={formData.key_lifetime}
-                      onChange={(e) => updateField('key_lifetime', e.target.value)}
-                      placeholder="1h"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Options */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Opções</h3>
-                <div className="flex items-center gap-6">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.auto_start}
-                      onChange={(e) => updateField('auto_start', e.target.checked)}
-                      className="rounded"
-                    />
-                    <span className="text-sm">Iniciar automaticamente no boot</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.is_enabled}
-                      onChange={(e) => updateField('is_enabled', e.target.checked)}
-                      className="rounded"
-                    />
-                    <span className="text-sm">Habilitado</span>
-                  </label>
-                </div>
-              </div>
-            </div>
+            <IPsecFormFields idPrefix="add" isEdit={false} formData={formData} updateField={updateField} showBackup={showBackup} setShowBackup={setShowBackup} serverInfo={serverInfo} />
             <DialogFooter className="mt-6">
               <Button type="button" variant="outline" onClick={() => setIsAddModalOpen(false)}>Cancelar</Button>
               <Button type="submit" disabled={createMutation.isPending}>
@@ -1188,275 +1189,7 @@ export default function IPsecPage() {
             <DialogDescription>Modifique a configuração da conexão IPsec</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleEditConnection}>
-            <div className="space-y-6 mt-4">
-              {/* Connection Details */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Detalhes da Conexão</h3>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-name">Nome da Conexão *</Label>
-                    <Input
-                      id="edit-name"
-                      value={formData.name}
-                      onChange={(e) => updateField('name', e.target.value)}
-                      placeholder="IPSECtoOffice"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-description">Descrição</Label>
-                    <Input
-                      id="edit-description"
-                      value={formData.description}
-                      onChange={(e) => updateField('description', e.target.value)}
-                      placeholder="VPN para o escritório principal"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Local Gateway */}
-              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Gateway Local (Este Servidor)</h3>
-                  {serverInfo?.private_ip && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (serverInfo) {
-                          updateField('left_ip', serverInfo.private_ip || '')
-                          updateField('left_subnet', serverInfo.local_subnet || '')
-                          updateField('left_id', serverInfo.public_ip || '')
-                        }
-                      }}
-                    >
-                      <RefreshCw className="h-3 w-3 mr-1" />
-                      Detectar automaticamente
-                    </Button>
-                  )}
-                </div>
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-left_ip">IP Privado</Label>
-                    <Input
-                      id="edit-left_ip"
-                      value={formData.left_ip}
-                      onChange={(e) => updateField('left_ip', e.target.value)}
-                      placeholder="10.30.1.254"
-                      className="bg-background"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-left_subnet">Sub-rede Local</Label>
-                    <Input
-                      id="edit-left_subnet"
-                      value={formData.left_subnet}
-                      onChange={(e) => updateField('left_subnet', e.target.value)}
-                      placeholder="10.30.0.0/16"
-                      className="bg-background"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-left_id">IP Público / ID</Label>
-                    <Input
-                      id="edit-left_id"
-                      value={formData.left_id}
-                      onChange={(e) => updateField('left_id', e.target.value)}
-                      placeholder="54.94.19.176"
-                      className="bg-background"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Remote Gateway */}
-              <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Gateway Remoto (Peer)</h3>
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-foreground">
-                    <input
-                      type="checkbox"
-                      checked={showBackup}
-                      onChange={(e) => {
-                        const on = e.target.checked
-                        setShowBackup(on)
-                        if (!on) updateField('right_ip_backup', '')
-                      }}
-                      className="rounded"
-                    />
-                    <span>Habilitar link de backup — failover (homologado em FortiGate)</span>
-                  </label>
-                </div>
-                {showBackup && (
-                  <p className="text-xs text-amber-600 dark:text-amber-500">
-                    ⚠ Failover com 2 links (primário + backup) é homologado apenas em <strong>FortiGate</strong>. Em pfSense, Endian ou outros equipamentos, use só o link primário.
-                  </p>
-                )}
-                {/* Linha 1 — só os IPs (primário e, se habilitado, o backup) */}
-                <div className={`grid gap-4 ${showBackup ? 'md:grid-cols-2' : 'md:grid-cols-1'}`}>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-right_ip">IP Público (primário) *</Label>
-                    <Input
-                      id="edit-right_ip"
-                      value={formData.right_ip}
-                      onChange={(e) => updateField('right_ip', e.target.value)}
-                      placeholder="187.92.78.242"
-                    />
-                    <p className="text-xs text-muted-foreground">IP público do peer remoto</p>
-                  </div>
-                  {showBackup && (
-                    <div className="space-y-2">
-                      <Label htmlFor="edit-right_ip_backup">IP de Backup (failover)</Label>
-                      <Input
-                        id="edit-right_ip_backup"
-                        value={formData.right_ip_backup}
-                        onChange={(e) => updateField('right_ip_backup', e.target.value)}
-                        placeholder="2º IP do peer"
-                      />
-                      <p className="text-xs text-muted-foreground">2º IP fixo do peer p/ failover (HA)</p>
-                    </div>
-                  )}
-                </div>
-                {/* Linha 2 — Peer ID (um nome/FQDN; não precisa ser IP) */}
-                <div className="space-y-2">
-                  <Label htmlFor="edit-right_id">ID do Peer</Label>
-                  <Input
-                    id="edit-right_id"
-                    value={formData.right_id}
-                    onChange={(e) => updateField('right_id', e.target.value)}
-                    placeholder="ex: matriz-fw ou vpn.cliente.com"
-                  />
-                  <p className="text-xs text-muted-foreground">Pode ser um nome/FQDN (ex: matriz-fw, vpn.cliente.com) ou o IP. O mesmo ID vale para o link primário e o backup.</p>
-                </div>
-                {/* Linha 3 — sub-rede(s) remota(s) */}
-                <div className="space-y-2">
-                  <Label htmlFor="edit-right_subnet">Sub-rede(s) Remota(s) *</Label>
-                  <Input
-                    id="edit-right_subnet"
-                    value={formData.right_subnet}
-                    onChange={(e) => updateField('right_subnet', e.target.value)}
-                    placeholder="10.0.0.0/24, 192.168.1.0/24"
-                  />
-                  <p className="text-xs text-muted-foreground">Use vírgula para separar múltiplas sub-redes</p>
-                </div>
-              </div>
-
-              {/* Authentication */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Autenticação</h3>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-psk">Chave Pré-Compartilhada (PSK)</Label>
-                  <Input
-                    id="edit-psk"
-                    type="password"
-                    value={formData.psk}
-                    onChange={(e) => updateField('psk', e.target.value)}
-                    placeholder="Deixe inalterado ou digite uma nova chave"
-                  />
-                  <p className="text-xs text-muted-foreground">Deixe como ******** para manter a chave atual, ou digite uma nova</p>
-                </div>
-              </div>
-
-              {/* Encryption Settings */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Configurações de Criptografia</h3>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-ike_version">Versão IKE</Label>
-                    <Select
-                      id="edit-ike_version"
-                      value={formData.ike_version}
-                      onChange={(e) => updateField('ike_version', e.target.value)}
-                      options={IKE_VERSION_OPTIONS}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-dpd_action">Ação DPD</Label>
-                    <Select
-                      id="edit-dpd_action"
-                      value={formData.dpd_action}
-                      onChange={(e) => updateField('dpd_action', e.target.value)}
-                      options={DPD_ACTION_OPTIONS}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-forwarding_mode">Modo de encaminhamento</Label>
-                    <Select
-                      id="edit-forwarding_mode"
-                      value={formData.forwarding_mode}
-                      onChange={(e) => updateField('forwarding_mode', e.target.value)}
-                      options={FORWARDING_MODE_OPTIONS}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-ike_cipher">Cifra IKE (Fase 1)</Label>
-                    <Select
-                      id="edit-ike_cipher"
-                      value={formData.ike_cipher}
-                      onChange={(e) => updateField('ike_cipher', e.target.value)}
-                      options={IKE_CIPHER_PRESETS}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-esp_cipher">Cifra ESP (Fase 2)</Label>
-                    <Select
-                      id="edit-esp_cipher"
-                      value={formData.esp_cipher}
-                      onChange={(e) => updateField('esp_cipher', e.target.value)}
-                      options={ESP_CIPHER_PRESETS}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-ike_lifetime">Tempo de Vida IKE</Label>
-                    <Input
-                      id="edit-ike_lifetime"
-                      value={formData.ike_lifetime}
-                      onChange={(e) => updateField('ike_lifetime', e.target.value)}
-                      placeholder="8h"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-key_lifetime">Tempo de Vida da Chave</Label>
-                    <Input
-                      id="edit-key_lifetime"
-                      value={formData.key_lifetime}
-                      onChange={(e) => updateField('key_lifetime', e.target.value)}
-                      placeholder="1h"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Options */}
-              <div className="space-y-4">
-                <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Opções</h3>
-                <div className="flex items-center gap-6">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.auto_start}
-                      onChange={(e) => updateField('auto_start', e.target.checked)}
-                      className="rounded"
-                    />
-                    <span className="text-sm">Iniciar automaticamente no boot</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.is_enabled}
-                      onChange={(e) => updateField('is_enabled', e.target.checked)}
-                      className="rounded"
-                    />
-                    <span className="text-sm">Habilitado</span>
-                  </label>
-                </div>
-              </div>
-            </div>
+            <IPsecFormFields idPrefix="edit" isEdit={true} formData={formData} updateField={updateField} showBackup={showBackup} setShowBackup={setShowBackup} serverInfo={serverInfo} />
             <DialogFooter className="mt-6">
               <Button type="button" variant="outline" onClick={() => setIsEditModalOpen(false)}>Cancelar</Button>
               <Button type="submit" disabled={updateMutation.isPending}>

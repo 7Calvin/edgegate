@@ -239,6 +239,8 @@ export interface IPsecConnection {
   auto_start: boolean
   prefer_backup?: boolean
   dpd_action: 'restart' | 'clear' | 'hold' | 'none'
+  vendor?: string
+  forwarding_mode?: string
   status: 'active' | 'inactive' | 'connecting' | 'error'
   is_enabled: boolean
   last_status_check?: string
@@ -266,6 +268,7 @@ export interface IPsecConnectionCreate {
   key_lifetime?: string
   auto_start?: boolean
   dpd_action?: 'restart' | 'clear' | 'hold' | 'none'
+  vendor?: string
   is_enabled?: boolean
 }
 

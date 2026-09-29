@@ -25,6 +25,28 @@ def _escape_secret(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+# Vendor capability registry. The peer's vendor drives the connection's
+# capabilities so advanced/route-based behaviour is only ever produced for a vendor
+# we've actually validated end-to-end:
+#   * fortigate -> route-based (deterministic failover via XFRM), dual-link allowed,
+#                  FortiGate export. VALIDATED.
+#   * generic   -> policy-based, single-link (no dual/backup), generic export sheet.
+# forwarding_mode is DERIVED from this table (the user no longer picks it); the
+# forwarding_mode column stays the runtime source of truth for config generation.
+# New validated vendors are added here as they're qualified.
+VENDOR_CAPABILITIES = {
+    "fortigate": {"forwarding_mode": "route", "dual_link": True, "export": "fortigate"},
+    "generic": {"forwarding_mode": "policy", "dual_link": False, "export": "generic"},
+}
+DEFAULT_VENDOR = "fortigate"
+
+
+def vendor_caps(vendor: str) -> dict:
+    """Capabilities for a vendor, falling back to 'generic' for unknown values so a
+    bad/legacy value can never accidentally unlock advanced behaviour."""
+    return VENDOR_CAPABILITIES.get((vendor or "").strip().lower(), VENDOR_CAPABILITIES["generic"])
+
+
 class IPsecStatus(str, enum.Enum):
     """IPsec connection status"""
     ACTIVE = "active"
@@ -108,6 +130,11 @@ class IPsecConnection(Base):
     #               backward compatibility; flip per-connection (or change the default)
     #               to adopt route-based.
     forwarding_mode = Column(String(10), default="route", server_default="policy")
+    # Peer vendor -> drives forwarding_mode + dual-link availability + export template
+    # via VENDOR_CAPABILITIES. See that table. server_default 'generic' keeps any
+    # pre-migration row on the safe/simple path; the 018 migration backfills existing
+    # route-based rows to 'fortigate'.
+    vendor = Column(String(20), default=DEFAULT_VENDOR, server_default="generic")
     # Route-based only: base XFRM interface id. The primary path uses if_id_base and
     # the backup path uses if_id_base + 1. Allocated on create (must be globally unique
     # on the host); see IPsecService._allocate_if_id_base().

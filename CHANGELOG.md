@@ -26,8 +26,15 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
     `_allocate_if_id_base()`; start/stop/status cientes das sub-conns `-p`/`-b`.
   - ipsec-agent: `POST /routebased/apply` (cria/limpa interfaces XFRM + updown +
     mapa de métricas) e `POST /routebased/active` (caminho ativo por métrica).
-  - Frontend: seletor "Modo de encaminhamento" (route por padrão) nos formulários
-    de criar/editar.
+- **Gating por vendor (tipo de firewall)** — novo campo **"Tipo de firewall"**
+  (FortiGate | Outro) que **deriva** o modo de encaminhamento e as capacidades:
+  FortiGate → route-based + dual-link (2º WAN) + export FortiGate; Outro →
+  policy-based, single-link. O antigo seletor "Modo de encaminhamento" saiu da UI
+  (agora é derivado do vendor). Migration `018` (`vendor`, `server_default='generic'`,
+  backfill `fortigate` onde `forwarding_mode='route'`) preserva as conexões existentes.
+- **Formulário de IPsec em painéis colapsáveis** (Network · Authentication · Fase 1 ·
+  Fase 2 · Avançado), estilo FortiGate, com o Gateway Local **auto-detectado** e o
+  link de backup (2º WAN) num toggle — visível só para FortiGate.
 
 ### Alterado
 - **Export FortiGate: base de IDs do SD-WAN parametrizável (`sdwan_base`)** — deixa

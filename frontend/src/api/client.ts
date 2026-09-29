@@ -562,6 +562,7 @@ export const ipsecApi = {
     key_lifetime?: string
     auto_start?: boolean
     dpd_action?: string
+    vendor?: string
     forwarding_mode?: string
     is_enabled?: boolean
   }) => api.post('/ipsec/connections', data),
@@ -585,6 +586,7 @@ export const ipsecApi = {
     key_lifetime: string
     auto_start: boolean
     dpd_action: string
+    vendor: string
     is_enabled: boolean
   }>) => api.put(`/ipsec/connections/${id}`, data),
 
