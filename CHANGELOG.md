@@ -26,6 +26,8 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
   re-adicionar, evitando a colisão transitória de `(prefixo, métrica)`), limpa rotas com
   métrica órfã e é no-op quando já está correto (não flapa).
 
+## [2.1.0] — 2026-09-29
+
 ### Adicionado
 - **IPsec route-based (interface XFRM) com failover determinístico** — novo modo de
   encaminhamento (`policy` | `route`, **`route` é o default** para novas conexões;
