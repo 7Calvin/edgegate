@@ -487,6 +487,21 @@ esac
 MSSEOF
     chmod +x /etc/ipsec.d/mss-clamp.sh
 
+    # Route-based (v2.2.0+) boot-race fix: recreate the XFRM interfaces (eg-<if_id>)
+    # BEFORE strongSwan loads conns, so the first CHILD_SA's updown can install its route.
+    # Without this, on boot the peer brings the tunnel up before the ipsec-agent creates
+    # eg-*, updown fails ("Cannot find device eg-NNNN"), and traffic blackholes ("online"
+    # but dead) until a manual restart. Idempotent oneshot ordered Before=strongswan.service.
+    mkdir -p /opt/edgegate/ipsec-agent
+    cp "${SCRIPT_DIR}/docker/ipsec-agent/edgegate-xfrm.sh" /opt/edgegate/ipsec-agent/edgegate-xfrm.sh
+    chmod +x /opt/edgegate/ipsec-agent/edgegate-xfrm.sh
+    cp "${SCRIPT_DIR}/docker/ipsec-agent/edgegate-xfrm.service" /etc/systemd/system/edgegate-xfrm.service
+    mkdir -p /etc/systemd/system/strongswan.service.d
+    printf '[Unit]\nAfter=edgegate-xfrm.service\nWants=edgegate-xfrm.service\n' \
+        > /etc/systemd/system/strongswan.service.d/10-edgegate-xfrm.conf
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable edgegate-xfrm.service 2>/dev/null || true
+
     log_success "StrongSwan configured"
     log_success "MSS clamping script created at /etc/ipsec.d/mss-clamp.sh"
 }

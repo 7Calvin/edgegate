@@ -305,6 +305,33 @@ PYEOF
 }
 tune_strongswan_conf || true
 
+# ==================== Self-heal route-based XFRM boot-race (v2.2.0+) ====================
+# Route-based conns bind the CHILD_SA to an XFRM interface eg-<if_id>. On boot the peer
+# brings the tunnel up (charon --load-all + start_action=start, and the FortiGate also
+# initiates) BEFORE the ipsec-agent creates eg-*, so updown fails ("Cannot find device
+# eg-NNNN"), the route never installs and traffic blackholes ("online" but dead) until a
+# manual restart. Fix: an idempotent oneshot that recreates eg-* from conf.d, ordered
+# Before=strongswan.service. install.sh adds it on fresh installs; re-assert here so the
+# existing fleet gets it on update (update.sh does not re-run install.sh). Never fatal.
+ensure_edgegate_xfrm() {
+    local src="${INSTALL_DIR}/docker/ipsec-agent/edgegate-xfrm.sh"
+    local svc="${INSTALL_DIR}/docker/ipsec-agent/edgegate-xfrm.service"
+    [ -f "$src" ] && [ -f "$svc" ] || return 0
+    mkdir -p /opt/edgegate/ipsec-agent
+    install -m 0755 "$src" /opt/edgegate/ipsec-agent/edgegate-xfrm.sh
+    install -m 0644 "$svc" /etc/systemd/system/edgegate-xfrm.service
+    mkdir -p /etc/systemd/system/strongswan.service.d
+    printf '[Unit]\nAfter=edgegate-xfrm.service\nWants=edgegate-xfrm.service\n' \
+        > /etc/systemd/system/strongswan.service.d/10-edgegate-xfrm.conf
+    systemctl daemon-reload >> "$LOG_FILE" 2>&1 || true
+    systemctl enable edgegate-xfrm.service >> "$LOG_FILE" 2>&1 || true
+    # Create the interfaces now too, so this update already protects without waiting for a
+    # reboot (idempotent: a no-op if they already exist).
+    systemctl start edgegate-xfrm.service >> "$LOG_FILE" 2>&1 || true
+    echo "edgegate-xfrm oneshot installed/enabled (route-based boot-race fix)" >> "$LOG_FILE"
+}
+ensure_edgegate_xfrm || true
+
 # ==================== Repair the traefik update-agent bind-mount (reboot-safety) ====
 # Old installs (<=1.4.3) bind-mounted docker/traefik/dynamic/update-agent.yml into
 # traefik. update.sh --delete wiped the host file; on the next reboot Docker recreated
