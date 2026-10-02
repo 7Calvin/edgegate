@@ -10,6 +10,7 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [2.2.1] — 2026-10-01
 ## [2.2.0] — 2026-09-29
 
 > **Release consolidado do IPsec route-based/failover.** As versões 2.1.0 e 2.1.1 foram
@@ -217,7 +218,8 @@ consolidado na seção **[Não lançado] → 2.2.0** acima.
 ## [2.0.0] — 2026-08-22
 - **Release público inicial do EdgeGate v2.0.0.**
 
-[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.2.0...HEAD
+[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/7Calvin/edgegate/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/7Calvin/edgegate/compare/v2.0.12...v2.2.0
 [2.0.12]: https://github.com/7Calvin/edgegate/compare/v2.0.11...v2.0.12
 [2.0.11]: https://github.com/7Calvin/edgegate/compare/v2.0.10...v2.0.11
