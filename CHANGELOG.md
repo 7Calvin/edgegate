@@ -10,6 +10,7 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [2.2.2] — 2026-10-01
 ## [2.2.1] — 2026-10-01
 ## [2.2.0] — 2026-09-29
 
@@ -218,7 +219,8 @@ consolidado na seção **[Não lançado] → 2.2.0** acima.
 ## [2.0.0] — 2026-08-22
 - **Release público inicial do EdgeGate v2.0.0.**
 
-[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.2.1...HEAD
+[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.2.2...HEAD
+[2.2.2]: https://github.com/7Calvin/edgegate/compare/v2.2.1...v2.2.2
 [2.2.1]: https://github.com/7Calvin/edgegate/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/7Calvin/edgegate/compare/v2.0.12...v2.2.0
 [2.0.12]: https://github.com/7Calvin/edgegate/compare/v2.0.11...v2.0.12
