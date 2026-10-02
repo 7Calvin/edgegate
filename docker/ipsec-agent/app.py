@@ -34,6 +34,130 @@ RB_METRICS = os.environ.get('RB_METRICS', '/etc/swanctl/rb-metrics.env')
 RB_XFRM_MTU = os.environ.get('RB_XFRM_MTU', '1400')
 
 
+# ==================== boot-race self-heal: install the XFRM oneshot ====================
+# Route-based conns bind the CHILD_SA to an XFRM interface eg-<if_id>. On boot the peer
+# brings the tunnel up (charon ExecStartPost `swanctl --load-all` + start_action=start, and
+# the FortiGate also initiates) BEFORE this agent creates eg-* (those are created on
+# /routebased/apply, which only runs once the backend is up ~30s in). updown then fails with
+# `Cannot find device eg-NNNN`, the route never installs and traffic blackholes ("online" but
+# dead) until a manual restart. The fix is a tiny oneshot (edgegate-xfrm.service, ordered
+# Before=strongswan.service) that recreates eg-<if_id> from conf.d before charon loads conns.
+#
+# We install it from HERE (agent startup) because the agent is reliably refreshed+restarted
+# on every update (update.sh `_refresh_ipsec_agent`) -- unlike update.sh itself, which cannot
+# self-update mid-run. So this closes the delivery gap: a box updating to this version gets
+# the oneshot installed immediately, and boots clean thereafter. The script body is kept
+# byte-identical to docker/ipsec-agent/edgegate-xfrm.sh (install.sh installs that on fresh
+# installs); if you edit one, edit the other.
+XFRM_ONESHOT_SCRIPT = '/opt/edgegate/ipsec-agent/edgegate-xfrm.sh'
+XFRM_ONESHOT_UNIT = '/etc/systemd/system/edgegate-xfrm.service'
+XFRM_ONESHOT_DROPIN = '/etc/systemd/system/strongswan.service.d/10-edgegate-xfrm.conf'
+
+_XFRM_SCRIPT_BODY = """#!/bin/sh
+# edgegate-xfrm.sh - recreate route-based XFRM interfaces BEFORE strongSwan loads conns.
+#
+# Fixes the boot race (v2.2.0 route-based IPsec): on boot the peer brings the tunnel up
+# (strongswan ExecStartPost `swanctl --load-all` + start_action=start, and the FortiGate
+# also initiates) BEFORE the ipsec-agent creates the eg-* XFRM interfaces. The CHILD_SA
+# updown then fails with `Cannot find device "eg-NNNN"`, the route never installs, and
+# traffic blackholes ("established/online" but dead) until a manual tunnel restart.
+#
+# Creating the interfaces up-front, ordered Before=strongswan.service, lets the very first
+# CHILD_SA install its route via updown. Idempotent; reads the same conf.d charon loads,
+# so it stays in sync automatically (no separate spec file to maintain).
+CONF_DIR=/etc/swanctl/conf.d
+MTU="${RB_XFRM_MTU:-1400}"
+
+log() { logger -t edgegate-xfrm "$*" 2>/dev/null || true; echo "edgegate-xfrm: $*"; }
+
+PHYS="$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}')"
+[ -n "$PHYS" ] || PHYS=ens5
+
+# Distinct if_id values from the route-based connections (eg-<if_id> = XFRM ifname).
+IFIDS="$(grep -rhoE 'if_id_(in|out) = [0-9]+' "$CONF_DIR" 2>/dev/null | grep -oE '[0-9]+' | sort -un)"
+if [ -z "$IFIDS" ]; then
+    log "no route-based if_id in $CONF_DIR - nothing to do"
+    exit 0
+fi
+
+for IFID in $IFIDS; do
+    NAME="eg-$IFID"
+    if ip link show "$NAME" >/dev/null 2>&1; then
+        log "$NAME already present"
+    elif ip link add "$NAME" type xfrm if_id "$IFID" dev "$PHYS" 2>/dev/null; then
+        log "created $NAME (if_id=$IFID dev=$PHYS)"
+    else
+        log "FAILED to create $NAME (if_id=$IFID dev=$PHYS)"
+        continue
+    fi
+    ip link set "$NAME" up 2>/dev/null || true
+    ip link set "$NAME" mtu "$MTU" 2>/dev/null || true
+done
+log "done (phys=$PHYS mtu=$MTU)"
+exit 0
+"""
+
+_XFRM_UNIT_BODY = """[Unit]
+Description=EdgeGate route-based XFRM interfaces (pre-strongSwan)
+Documentation=https://github.com/7Calvin/edgegate
+After=network-online.target
+Wants=network-online.target
+# Must run before charon loads conns, so the first CHILD_SA can install its route.
+Before=strongswan.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/edgegate/ipsec-agent/edgegate-xfrm.sh
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+_XFRM_DROPIN_BODY = "[Unit]\nAfter=edgegate-xfrm.service\nWants=edgegate-xfrm.service\n"
+
+
+def _write_if_changed(path, content, mode):
+    try:
+        with open(path) as f:
+            if f.read() == content:
+                return False
+    except OSError:
+        pass
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(path, 'w') as f:
+        f.write(content)
+    os.chmod(path, mode)
+    return True
+
+
+def ensure_xfrm_boot_oneshot():
+    """Install + enable the edgegate-xfrm oneshot (idempotent). Runs at agent startup so the
+    fix reaches the whole fleet via the reliable agent-refresh path. Never fatal."""
+    try:
+        changed = _write_if_changed(XFRM_ONESHOT_SCRIPT, _XFRM_SCRIPT_BODY, 0o755)
+        changed = _write_if_changed(XFRM_ONESHOT_UNIT, _XFRM_UNIT_BODY, 0o644) or changed
+        changed = _write_if_changed(XFRM_ONESHOT_DROPIN, _XFRM_DROPIN_BODY, 0o644) or changed
+        if changed:
+            subprocess.run(['systemctl', 'daemon-reload'], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['systemctl', 'enable', 'edgegate-xfrm.service'], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Create the interfaces now too (idempotent) so this update already protects without
+        # waiting for the next reboot.
+        subprocess.run(['systemctl', 'start', 'edgegate-xfrm.service'], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info("edgegate-xfrm oneshot ensured (changed=%s)", changed)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ensure_xfrm_boot_oneshot failed: %s", e)
+
+
+# Run at import so it executes under gunicorn (imports app:app), not just `python app.py`.
+ensure_xfrm_boot_oneshot()
+
+
 def check_auth():
     # Constant-time comparison to avoid a token timing side-channel.
     header = request.headers.get('Authorization', '')
