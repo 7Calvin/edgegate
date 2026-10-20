@@ -10,6 +10,7 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [2.3.0] — 2026-10-20
 ### Adicionado
 - **Gestão de acesso VPN por usuário no painel** (aba Usuários), coluna "Acesso VPN":
   - **Reatribuir o IP fixo** de um usuário direto pela UI (antes só era possível mexendo no
@@ -238,7 +239,8 @@ consolidado na seção **[Não lançado] → 2.2.0** acima.
 ## [2.0.0] — 2026-08-22
 - **Release público inicial do EdgeGate v2.0.0.**
 
-[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.2.2...HEAD
+[Não lançado]: https://github.com/7Calvin/edgegate/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/7Calvin/edgegate/compare/v2.2.2...v2.3.0
 [2.2.2]: https://github.com/7Calvin/edgegate/compare/v2.2.1...v2.2.2
 [2.2.1]: https://github.com/7Calvin/edgegate/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/7Calvin/edgegate/compare/v2.0.12...v2.2.0
