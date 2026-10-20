@@ -424,6 +424,37 @@ class VPNService:
             entry.allocated_to_id = user_id
             entry.allocated_at = func.now()
 
+    async def set_active(self, profile: VPNProfile, active: bool) -> VPNProfile:
+        """Enable/disable VPN access (the reversible desativar/reativar toggle).
+
+        Preserves the IP and certificate — access is enforced at the OpenVPN auth
+        endpoint, so flipping is_active is enough to allow/deny. Reactivating also
+        clears any legacy revoked state and restores the fixed-IP CCD; disabling
+        drops the live session so it takes effect immediately.
+        """
+        user = await self._get_user_by_profile(profile)
+        username = user.username if user else None
+
+        profile.is_active = active
+        if active:
+            # Reactivation: clear legacy revoked state so auth allows the user and
+            # the profile reads as cleanly active.
+            profile.is_revoked = False
+            profile.revoked_at = None
+            profile.revocation_reason = None
+        await self.db.commit()
+        await self.db.refresh(profile)
+
+        if active and username:
+            # Ensure the CCD exists (a legacy revoke removed it) so the user keeps
+            # their fixed IP on reconnect.
+            await self._create_ccd_file(username, profile)
+        if not active and username:
+            await self.disconnect_client(username)
+
+        logger.info(f"VPN access {'enabled' if active else 'disabled'} for user_id={profile.user_id}")
+        return profile
+
     async def reassign_ip(
         self,
         profile: VPNProfile,

@@ -308,6 +308,16 @@ class VPNProfileIPReassign(BaseModel):
         return str(ip)
 
 
+class VPNProfileActiveUpdate(BaseModel):
+    """Enable/disable VPN access for a profile (admin only).
+
+    Toggling is_active is the reversible "desativar/reativar": it preserves the
+    IP and certificate (the .ovpn keeps working), and access is enforced at the
+    OpenVPN auth endpoint. Disabling also drops the live session.
+    """
+    is_active: bool
+
+
 class VPNNetworkChangeRequest(BaseModel):
     """Disruptive VPN subnet change (reassigns every client IP + restarts OpenVPN)."""
     vpn_network: str

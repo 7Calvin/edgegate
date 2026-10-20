@@ -195,6 +195,10 @@ export const vpnApi = {
   reassignIp: (id: string, assignedIp: string, disconnect = true) =>
     api.patch(`/vpn/profiles/${id}/ip`, { assigned_ip: assignedIp, disconnect }),
 
+  // Enable/disable VPN access (reversible; keeps the IP and .ovpn).
+  setProfileActive: (id: string, isActive: boolean) =>
+    api.patch(`/vpn/profiles/${id}/active`, { is_active: isActive }),
+
   revokeProfile: (id: string, reason?: string) =>
     api.post(`/vpn/profiles/${id}/revoke`, null, { params: { reason } }),
 

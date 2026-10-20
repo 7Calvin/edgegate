@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { formatDateTime } from '@/lib/tz'
-import { Plus, Search, UserCheck, UserX, Key, X, Eye, EyeOff, Server, User as UserIcon, Trash2, Copy, Check, AlertTriangle, ShieldCheck, ShieldOff, Smartphone, Network, Router, Shield, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Search, UserCheck, UserX, Key, X, Eye, EyeOff, Server, User as UserIcon, Trash2, Copy, Check, AlertTriangle, ShieldCheck, ShieldOff, Smartphone, Network, Router, Shield, ChevronDown, ChevronRight, Wifi, Unlink, Power, PowerOff } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { TrustedHostsModal } from '@/components/TrustedHostsModal'
 import { parseHostEntry } from '@/lib/cidr'
@@ -56,6 +56,8 @@ export default function UsersPage() {
   // VPN IP reassignment
   const [reassignUser, setReassignUser] = useState<User | null>(null)
   const [newIp, setNewIp] = useState('')
+  // VPN access removal confirmation
+  const [removeVpnUser, setRemoveVpnUser] = useState<User | null>(null)
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['users', search, typeFilter, page, perPage],
@@ -136,6 +138,7 @@ export default function UsersPage() {
     mutationFn: (id: string) => usersApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
+      queryClient.invalidateQueries({ queryKey: ['vpn-profiles'] })
       toast({ title: 'Usuário excluído com sucesso' })
       setUserToDelete(null)
       setDeleteConfirmUsername('')
@@ -175,6 +178,9 @@ export default function UsersPage() {
     },
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
+      // A VPN profile is auto-provisioned on user creation, so refresh the
+      // profiles map too — otherwise the new user's IP/action won't show until reload.
+      queryClient.invalidateQueries({ queryKey: ['vpn-profiles'] })
       if (userType === 'service' && response.data.api_key) {
         setApiKeyInfo({
           username: response.data.username,
@@ -253,6 +259,58 @@ export default function UsersPage() {
       toast({
         variant: 'destructive',
         title: 'Falha ao reatribuir o IP',
+        description: err.response?.data?.message || err.response?.data?.detail || 'Erro desconhecido',
+      })
+    },
+  })
+
+  // Grant VPN access: provision a profile (cert + IP) for a user that has none.
+  const grantVpnMutation = useMutation({
+    mutationFn: (userId: string) => vpnApi.createProfileForUser(userId),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['vpn-profiles'] })
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      toast({ title: 'Acesso VPN liberado', description: `IP atribuído: ${res.data.assigned_ip}` })
+    },
+    onError: (err: any) => {
+      toast({
+        variant: 'destructive',
+        title: 'Falha ao liberar acesso VPN',
+        description: err.response?.data?.message || err.response?.data?.detail || 'Erro desconhecido',
+      })
+    },
+  })
+
+  // Enable/disable VPN access (reversible; keeps IP + cert + .ovpn).
+  const toggleVpnMutation = useMutation({
+    mutationFn: ({ profileId, active }: { profileId: string; active: boolean }) =>
+      vpnApi.setProfileActive(profileId, active),
+    onSuccess: (_res, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['vpn-profiles'] })
+      toast({ title: vars.active ? 'Acesso VPN reativado' : 'Acesso VPN desativado' })
+    },
+    onError: (err: any) => {
+      toast({
+        variant: 'destructive',
+        title: 'Falha ao alterar o acesso VPN',
+        description: err.response?.data?.message || err.response?.data?.detail || 'Erro desconhecido',
+      })
+    },
+  })
+
+  // Remove VPN access: delete the profile (revokes cert, removes CCD, frees IP).
+  const removeVpnMutation = useMutation({
+    mutationFn: (profileId: string) => vpnApi.deleteProfile(profileId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vpn-profiles'] })
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      toast({ title: 'Acesso VPN removido' })
+      setRemoveVpnUser(null)
+    },
+    onError: (err: any) => {
+      toast({
+        variant: 'destructive',
+        title: 'Falha ao remover acesso VPN',
         description: err.response?.data?.message || err.response?.data?.detail || 'Erro desconhecido',
       })
     },
@@ -390,6 +448,7 @@ export default function UsersPage() {
                     <th className="px-4 py-3 text-left">MFA</th>
                     <th className="px-4 py-3 text-left">Último Acesso</th>
                     <th className="px-4 py-3 text-left">Status</th>
+                    <th className="px-4 py-3 text-left">Acesso VPN</th>
                     <th className="px-4 py-3 text-right">Ações</th>
                   </tr>
                 </thead>
@@ -520,20 +579,76 @@ export default function UsersPage() {
                           )}
                         </button>
                       </td>
+                      <td className="px-4 py-3">
+                        {(() => {
+                          const prof = profileByUserId[user.id]
+                          if (!prof) {
+                            return (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={grantVpnMutation.isPending}
+                                onClick={() => grantVpnMutation.mutate(user.id)}
+                                title="Liberar acesso VPN (gera certificado + IP)"
+                              >
+                                <Wifi className="h-3.5 w-3.5 mr-1" /> Liberar VPN
+                              </Button>
+                            )
+                          }
+                          return (
+                            <div className="flex items-center gap-1">
+                              <span
+                                className={`font-mono text-xs rounded px-2 py-0.5 ${prof.is_active ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground line-through'}`}
+                                title={prof.is_active ? 'Acesso VPN ativo' : 'Acesso VPN desativado'}
+                              >
+                                {prof.assigned_ip}
+                              </span>
+                              {prof.is_active ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="Desativar acesso VPN (reversível; mantém IP e .ovpn)"
+                                  className="hover:text-destructive"
+                                  disabled={toggleVpnMutation.isPending}
+                                  onClick={() => toggleVpnMutation.mutate({ profileId: prof.id, active: false })}
+                                >
+                                  <PowerOff className="h-3.5 w-3.5" />
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="Reativar acesso VPN (mesmo IP e .ovpn)"
+                                  className="hover:text-success"
+                                  disabled={toggleVpnMutation.isPending}
+                                  onClick={() => toggleVpnMutation.mutate({ profileId: prof.id, active: true })}
+                                >
+                                  <Power className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="Reatribuir IP da VPN"
+                                onClick={() => { setReassignUser(user); setNewIp(prof.assigned_ip) }}
+                              >
+                                <Router className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="Remover acesso VPN de vez (apaga o perfil e libera o IP)"
+                                className="hover:text-destructive"
+                                onClick={() => setRemoveVpnUser(user)}
+                              >
+                                <Unlink className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          )
+                        })()}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          {/* VPN IP reassignment is EdgeGate-managed, so it's offered
-                              for AD users too (unlike password/delete, which the AD owns). */}
-                          {profileByUserId[user.id] && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              title={`Reatribuir IP da VPN (atual: ${profileByUserId[user.id].assigned_ip})`}
-                              onClick={() => { setReassignUser(user); setNewIp(profileByUserId[user.id].assigned_ip) }}
-                            >
-                              <Router className="h-4 w-4" />
-                            </Button>
-                          )}
                         {user.auth_source === 'ad' ? (
                           <span
                             className="pr-2 text-xs text-muted-foreground"
@@ -998,6 +1113,34 @@ export default function UsersPage() {
             <div className="flex justify-end pt-4">
               <Button onClick={() => setApiKeyInfo(null)}>
                 Fechar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove VPN access confirmation */}
+      {removeVpnUser && profileByUserId[removeVpnUser.id] && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background rounded-lg shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3 text-destructive">
+              <AlertTriangle className="h-6 w-6" />
+              <h2 className="text-xl font-bold">Remover acesso VPN</h2>
+            </div>
+            <p className="text-muted-foreground">
+              Remover o acesso VPN de <span className="font-mono font-bold text-foreground">{removeVpnUser.username}</span>?
+              Isto revoga o certificado, remove a configuração e libera o IP{' '}
+              <span className="font-mono font-bold text-foreground">{profileByUserId[removeVpnUser.id].assigned_ip}</span>.
+              Para reativar depois use "Liberar VPN" (gera um novo IP e um novo <span className="font-mono">.ovpn</span>).
+            </p>
+            <div className="flex gap-2 justify-end pt-4">
+              <Button variant="outline" onClick={() => setRemoveVpnUser(null)}>Cancelar</Button>
+              <Button
+                variant="destructive"
+                disabled={removeVpnMutation.isPending}
+                onClick={() => removeVpnMutation.mutate(profileByUserId[removeVpnUser.id].id)}
+              >
+                {removeVpnMutation.isPending ? 'Removendo...' : 'Remover acesso'}
               </Button>
             </div>
           </div>

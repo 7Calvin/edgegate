@@ -129,19 +129,9 @@ async def create_user(
             detail=error
         )
 
-    # Automatically create VPN profile for the new user
-    from app.services.vpn_service import VPNService
-    from app.schemas.vpn import VPNProfileCreate
-
-    vpn_service = VPNService(db)
-    vpn_data = VPNProfileCreate(user_id=user.id)
-    profile, vpn_error = await vpn_service.create_profile(user, vpn_data)
-
-    if vpn_error:
-        # Log but don't fail - user was created successfully
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to create VPN profile for user {user.username}: {vpn_error}")
-
+    # VPN access is opt-in: profiles are provisioned explicitly by an admin from
+    # the Users page ("Liberar VPN"), not automatically on user creation. This
+    # lets panel-only admins exist without a VPN certificate/IP.
     return user
 
 

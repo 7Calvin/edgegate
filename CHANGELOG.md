@@ -10,6 +10,25 @@ e o versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Adicionado
+- **Gestão de acesso VPN por usuário no painel** (aba Usuários), coluna "Acesso VPN":
+  - **Reatribuir o IP fixo** de um usuário direto pela UI (antes só era possível mexendo no
+    banco). A operação sincroniza banco + `ip_pool` + o CCD do OpenVPN (`ifconfig-push`) e
+    derruba a sessão ativa, com validações de subrede/gateway/broadcast/IP reservado e
+    guardrail de sobreposição pela constraint `UNIQUE` (corrida de concorrência tratada).
+  - **Acesso VPN opt-in**: criar usuário **não** provisiona mais o perfil VPN
+    automaticamente; o admin libera explicitamente ("Liberar VPN", gera certificado + IP).
+  - **Desativar/Reativar** acesso de forma reversível, **preservando o IP e o `.ovpn`** (o
+    certificado não é tocado); desativar derruba a sessão ativa na hora.
+  - Ações disponíveis também para usuários do **Active Directory** (o acesso VPN é
+    gerenciado pelo EdgeGate, não pelo AD).
+
+### Alterado
+- **O acesso ao OpenVPN agora é enforced no `/vpn/auth`**: só conecta quem tem um perfil
+  VPN **ativo**. Antes, qualquer conta ativa com senha válida conectava (recebendo um IP
+  dinâmico do pool) mesmo sem perfil. Perfis ativos existentes **não são afetados**; contas
+  que conectavam sem perfil passam a precisar de acesso liberado pelo painel.
+
 ## [2.2.2] — 2026-10-01
 ## [2.2.1] — 2026-10-01
 ## [2.2.0] — 2026-09-29

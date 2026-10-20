@@ -14,6 +14,7 @@ from app.schemas.vpn import (
     VPNProfileCreate,
     VPNProfileUpdate,
     VPNProfileIPReassign,
+    VPNProfileActiveUpdate,
     VPNProfileResponse,
     VPNConfigResponse,
     VPNServerStatus,
@@ -261,6 +262,29 @@ async def reassign_vpn_profile_ip(
 
     await db.refresh(profile)
     return profile
+
+
+@router.patch("/profiles/{profile_id}/active", response_model=VPNProfileResponse)
+async def set_vpn_profile_active(
+    profile_id: UUID,
+    data: VPNProfileActiveUpdate,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Enable/disable VPN access for a profile (admin only).
+
+    Reversible: preserves the IP and certificate. Disabling drops the live
+    session; access is enforced at /vpn/auth.
+    """
+    vpn_service = VPNService(db)
+    profile = await vpn_service.get_profile_by_id(profile_id)
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="VPN profile not found"
+        )
+    updated = await vpn_service.set_active(profile, data.is_active)
+    return updated
 
 
 @router.post("/profiles/{profile_id}/revoke", response_model=MessageResponse)
@@ -681,12 +705,24 @@ async def vpn_authenticate(
             detail=error or "MFA required - use web interface"
         )
 
-    # User authenticated successfully - no VPN profile required
-    # Just check if user is active
+    # User authenticated successfully - check account is active
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is disabled"
+        )
+
+    # VPN access control: the user must have an ACTIVE VPN profile. This is what
+    # makes "opt-in" and "desativar" real — without an active profile, a valid
+    # account+password would otherwise still connect (and get a dynamic IP).
+    # is_active is false for both disabled and legacy-revoked profiles, so this
+    # single check covers both.
+    vpn_service = VPNService(db)
+    profile = await vpn_service.get_profile_by_user_id(user.id)
+    if not profile or not profile.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="VPN access is not enabled for this user"
         )
 
     return {"success": True, "user_id": str(user.id)}
