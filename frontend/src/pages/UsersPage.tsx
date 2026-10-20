@@ -521,15 +521,9 @@ export default function UsersPage() {
                         </button>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {user.auth_source === 'ad' ? (
-                          <span
-                            className="pr-2 text-xs text-muted-foreground"
-                            title="Conta gerenciada pelo Active Directory — senha e exclusão são controladas no AD"
-                          >
-                            Gerenciado no AD
-                          </span>
-                        ) : (
-                        <div className="flex justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1">
+                          {/* VPN IP reassignment is EdgeGate-managed, so it's offered
+                              for AD users too (unlike password/delete, which the AD owns). */}
                           {profileByUserId[user.id] && (
                             <Button
                               variant="ghost"
@@ -540,6 +534,15 @@ export default function UsersPage() {
                               <Router className="h-4 w-4" />
                             </Button>
                           )}
+                        {user.auth_source === 'ad' ? (
+                          <span
+                            className="pr-2 text-xs text-muted-foreground"
+                            title="Conta gerenciada pelo Active Directory — senha e exclusão são controladas no AD"
+                          >
+                            Gerenciado no AD
+                          </span>
+                        ) : (
+                        <>
                           {(user.user_type === 'service' || user.is_admin) && (
                             <Button
                               variant="ghost"
@@ -589,8 +592,9 @@ export default function UsersPage() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                        </div>
+                        </>
                         )}
+                        </div>
                       </td>
                     </tr>
                   ))}

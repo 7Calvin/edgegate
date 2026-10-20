@@ -15,6 +15,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, delete, cast
 from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy.exc import IntegrityError
 
 from app.models.user import User
 from app.models.vpn_profile import VPNProfile, AuthMethod
@@ -473,6 +474,16 @@ class VPNService:
         if clash.scalar_one_or_none():
             return False, f"O IP {ip} já está atribuído a outro perfil"
 
+        # Respect admin-defined pool reservations (gateway/broadcast/special).
+        reserved = await self.db.execute(
+            select(IPPool)
+            .where(IPPool.ip_address == cast(str(ip), INET))
+            .where(IPPool.is_reserved == True)  # noqa: E712
+        )
+        reserved_entry = reserved.scalar_one_or_none()
+        if reserved_entry:
+            return False, f"O IP {ip} está reservado ({reserved_entry.reserved_for or 'reservado'})"
+
         user = await self._get_user_by_profile(profile)
         username = user.username if user else None
 
@@ -480,8 +491,16 @@ class VPNService:
         await self._free_pool_ip(old_ip)
         await self._claim_pool_ip(str(ip), profile.user_id)
 
+        # The DB UNIQUE constraint on assigned_ip is the hard guarantee against
+        # overlap: the pre-check above can lose a race between two concurrent
+        # reassigns, but the second commit then fails here — turn that into a
+        # clean error instead of a 500.
         profile.assigned_ip = str(ip)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            return False, f"O IP {ip} acabou de ser atribuído a outro perfil — tente outro"
         await self.db.refresh(profile)
 
         # Rewrite the CCD — this is what actually pins the IP on the next connect.
