@@ -284,6 +284,30 @@ class VPNServerConfig(BaseModel):
         return v
 
 
+class VPNProfileIPReassign(BaseModel):
+    """Reassign a single profile's fixed VPN IP (admin only).
+
+    assigned_ip is NOT part of VPNProfileUpdate on purpose: changing the IP has
+    side effects (CCD rewrite, pool accounting, live-session drop) that must be
+    handled in the service, so it gets its own endpoint/schema.
+    """
+    assigned_ip: str
+    # Drop the client's active session so it reconnects straight onto the new IP.
+    # Without this the change only takes effect on the next (re)connect.
+    disconnect: bool = True
+
+    @field_validator("assigned_ip")
+    @classmethod
+    def _valid_ip(cls, v):
+        try:
+            ip = ipaddress.ip_address(str(v).strip())
+        except ValueError:
+            raise ValueError(f"Endereço IP inválido: {v}")
+        if ip.version != 4:
+            raise ValueError("Apenas IPv4 é suportado")
+        return str(ip)
+
+
 class VPNNetworkChangeRequest(BaseModel):
     """Disruptive VPN subnet change (reassigns every client IP + restarts OpenVPN)."""
     vpn_network: str

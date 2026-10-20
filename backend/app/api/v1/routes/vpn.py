@@ -13,6 +13,7 @@ from app.dependencies.auth import get_current_active_user, require_admin
 from app.schemas.vpn import (
     VPNProfileCreate,
     VPNProfileUpdate,
+    VPNProfileIPReassign,
     VPNProfileResponse,
     VPNConfigResponse,
     VPNServerStatus,
@@ -226,6 +227,40 @@ async def update_vpn_profile(
 
     updated_profile = await vpn_service.update_profile(profile, data)
     return updated_profile
+
+
+@router.patch("/profiles/{profile_id}/ip", response_model=VPNProfileResponse)
+async def reassign_vpn_profile_ip(
+    profile_id: UUID,
+    data: VPNProfileIPReassign,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Reassign a VPN profile's fixed IP (admin only).
+
+    Syncs DB + ip_pool + OpenVPN CCD and (by default) drops the live session so
+    the client reconnects onto the new IP.
+    """
+    vpn_service = VPNService(db)
+    profile = await vpn_service.get_profile_by_id(profile_id)
+
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="VPN profile not found"
+        )
+
+    success, error = await vpn_service.reassign_ip(
+        profile, data.assigned_ip, disconnect=data.disconnect
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error
+        )
+
+    await db.refresh(profile)
+    return profile
 
 
 @router.post("/profiles/{profile_id}/revoke", response_model=MessageResponse)

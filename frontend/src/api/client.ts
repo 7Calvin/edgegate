@@ -190,6 +190,11 @@ export const vpnApi = {
   updateProfile: (id: string, data: Partial<{ is_active: boolean }>) =>
     api.patch(`/vpn/profiles/${id}`, data),
 
+  // Reassign a profile's fixed VPN IP. disconnect drops the live session so the
+  // client reconnects straight onto the new IP.
+  reassignIp: (id: string, assignedIp: string, disconnect = true) =>
+    api.patch(`/vpn/profiles/${id}/ip`, { assigned_ip: assignedIp, disconnect }),
+
   revokeProfile: (id: string, reason?: string) =>
     api.post(`/vpn/profiles/${id}/revoke`, null, { params: { reason } }),
 

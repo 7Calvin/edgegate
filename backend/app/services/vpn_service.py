@@ -13,7 +13,8 @@ import json
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func, delete
+from sqlalchemy import select, update, func, delete, cast
+from sqlalchemy.dialects.postgresql import INET
 
 from app.models.user import User
 from app.models.vpn_profile import VPNProfile, AuthMethod
@@ -401,6 +402,100 @@ class VPNService:
                 return ip_str
 
         return None
+
+    async def _free_pool_ip(self, ip: str) -> None:
+        """Release a pool entry if one exists (best-effort accounting)."""
+        await self.db.execute(
+            update(IPPool)
+            .where(IPPool.ip_address == cast(ip, INET))
+            .values(is_allocated=False, allocated_to_id=None, allocated_at=None)
+        )
+
+    async def _claim_pool_ip(self, ip: str, user_id: UUID) -> None:
+        """Mark a pool entry as allocated if it exists. If the IP isn't in the
+        pool we do nothing: the range allocator (_allocate_ip_from_range) already
+        skips any IP present in vpn_profiles.assigned_ip, so uniqueness holds even
+        without a pool row."""
+        result = await self.db.execute(select(IPPool).where(IPPool.ip_address == cast(ip, INET)))
+        entry = result.scalar_one_or_none()
+        if entry:
+            entry.is_allocated = True
+            entry.allocated_to_id = user_id
+            entry.allocated_at = func.now()
+
+    async def reassign_ip(
+        self,
+        profile: VPNProfile,
+        new_ip: str,
+        disconnect: bool = True,
+    ) -> Tuple[bool, Optional[str]]:
+        """Reassign a single profile's fixed VPN IP.
+
+        Keeps the DB, the ip_pool accounting and the OpenVPN CCD file in sync —
+        the CCD (`ifconfig-push`) is what actually pins the IP, so a bare DB write
+        would leave the server handing out the old address. Optionally drops the
+        live session so the client reconnects straight onto the new IP.
+
+        Returns (success, error_message).
+        """
+        import ipaddress
+
+        cfg = get_server_config()
+        vpn_network = cfg.get("vpn_network", settings.OPENVPN_NETWORK)
+        vpn_netmask = cfg.get("vpn_netmask", settings.OPENVPN_NETMASK)
+        try:
+            net = ipaddress.ip_network(f"{vpn_network}/{vpn_netmask}", strict=False)
+            ip = ipaddress.ip_address(str(new_ip).strip())
+        except ValueError as e:
+            return False, f"IP/subrede inválido: {e}"
+
+        if ip.version != 4:
+            return False, "Apenas IPv4 é suportado"
+        if ip not in net:
+            return False, f"O IP {ip} está fora da subrede da VPN ({net})"
+        if ip in (net.network_address, net.broadcast_address):
+            return False, f"O IP {ip} é endereço de rede/broadcast e é reservado"
+        # Gateway (.1) is reserved for the server (see _allocate_ip_from_range).
+        if int(ip) == int(net.network_address) + 1:
+            return False, f"O IP {ip} é o gateway da VPN e é reservado"
+
+        old_ip = str(profile.assigned_ip)
+        if str(ip) == old_ip:
+            return True, None  # no-op
+
+        # Uniqueness: assigned_ip has a UNIQUE constraint, so a collision would
+        # raise on commit regardless of is_revoked. Check up front for a clean 400.
+        clash = await self.db.execute(
+            select(VPNProfile)
+            .where(VPNProfile.assigned_ip == cast(str(ip), INET))
+            .where(VPNProfile.id != profile.id)
+        )
+        if clash.scalar_one_or_none():
+            return False, f"O IP {ip} já está atribuído a outro perfil"
+
+        user = await self._get_user_by_profile(profile)
+        username = user.username if user else None
+
+        # Pool accounting: free the old IP, claim the new one (both best-effort).
+        await self._free_pool_ip(old_ip)
+        await self._claim_pool_ip(str(ip), profile.user_id)
+
+        profile.assigned_ip = str(ip)
+        await self.db.commit()
+        await self.db.refresh(profile)
+
+        # Rewrite the CCD — this is what actually pins the IP on the next connect.
+        if username:
+            await self._create_ccd_file(username, profile)
+
+        # Drop the live session so the client reconnects onto the new IP.
+        if disconnect and username:
+            await self.disconnect_client(username)
+
+        logger.info(
+            f"Reassigned VPN IP for user_id={profile.user_id}: {old_ip} -> {ip}"
+        )
+        return True, None
 
     async def change_vpn_network(self, new_network: str, new_netmask: str) -> Tuple[bool, Optional[str]]:
         """Change the VPN subnet: reassign every profile's IP, rewrite ccd, and

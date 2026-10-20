@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { usersApi } from '@/api/client'
+import { usersApi, vpnApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -8,11 +8,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { formatDateTime } from '@/lib/tz'
-import { Plus, Search, UserCheck, UserX, Key, X, Eye, EyeOff, Server, User as UserIcon, Trash2, Copy, Check, AlertTriangle, ShieldCheck, ShieldOff, Smartphone, Network, Shield, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Search, UserCheck, UserX, Key, X, Eye, EyeOff, Server, User as UserIcon, Trash2, Copy, Check, AlertTriangle, ShieldCheck, ShieldOff, Smartphone, Network, Router, Shield, ChevronDown, ChevronRight } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { TrustedHostsModal } from '@/components/TrustedHostsModal'
 import { parseHostEntry } from '@/lib/cidr'
-import type { User } from '@/types'
+import type { User, VPNProfile } from '@/types'
 
 export default function UsersPage() {
   const queryClient = useQueryClient()
@@ -53,6 +53,10 @@ export default function UsersPage() {
   // Trusted Hosts editor (admins + service accounts)
   const [trustedHostsUser, setTrustedHostsUser] = useState<User | null>(null)
 
+  // VPN IP reassignment
+  const [reassignUser, setReassignUser] = useState<User | null>(null)
+  const [newIp, setNewIp] = useState('')
+
   const { data: users, isLoading } = useQuery({
     queryKey: ['users', search, typeFilter, page, perPage],
     queryFn: () =>
@@ -71,6 +75,17 @@ export default function UsersPage() {
         })
         .then((res) => res.data),
   })
+
+  // VPN profiles, mapped by user_id so each row can show/manage its fixed IP
+  const { data: vpnProfiles } = useQuery({
+    queryKey: ['vpn-profiles'],
+    queryFn: () => vpnApi.listProfiles().then((res) => res.data as VPNProfile[]),
+  })
+  const profileByUserId = useMemo(() => {
+    const map: Record<string, VPNProfile> = {}
+    for (const p of vpnProfiles || []) map[p.user_id] = p
+    return map
+  }, [vpnProfiles])
 
   const toggleUserMutation = useMutation({
     mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
@@ -218,6 +233,27 @@ export default function UsersPage() {
         variant: 'destructive',
         title: 'Não foi possível atualizar a função de administrador',
         description: message,
+      })
+    },
+  })
+
+  const reassignIpMutation = useMutation({
+    mutationFn: ({ profileId, ip }: { profileId: string; ip: string }) =>
+      vpnApi.reassignIp(profileId, ip),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vpn-profiles'] })
+      toast({
+        title: 'IP da VPN reatribuído',
+        description: 'A sessão ativa foi encerrada; o usuário reconecta no novo IP.',
+      })
+      setReassignUser(null)
+      setNewIp('')
+    },
+    onError: (err: any) => {
+      toast({
+        variant: 'destructive',
+        title: 'Falha ao reatribuir o IP',
+        description: err.response?.data?.message || err.response?.data?.detail || 'Erro desconhecido',
       })
     },
   })
@@ -494,6 +530,16 @@ export default function UsersPage() {
                           </span>
                         ) : (
                         <div className="flex justify-end gap-1">
+                          {profileByUserId[user.id] && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title={`Reatribuir IP da VPN (atual: ${profileByUserId[user.id].assigned_ip})`}
+                              onClick={() => { setReassignUser(user); setNewIp(profileByUserId[user.id].assigned_ip) }}
+                            >
+                              <Router className="h-4 w-4" />
+                            </Button>
+                          )}
                           {(user.user_type === 'service' || user.is_admin) && (
                             <Button
                               variant="ghost"
@@ -948,6 +994,64 @@ export default function UsersPage() {
             <div className="flex justify-end pt-4">
               <Button onClick={() => setApiKeyInfo(null)}>
                 Fechar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VPN IP reassignment modal */}
+      {reassignUser && profileByUserId[reassignUser.id] && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background rounded-lg shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <Router className="h-6 w-6 text-primary" />
+              <h2 className="text-xl font-bold">Reatribuir IP da VPN</h2>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-muted-foreground">
+                Usuário <span className="font-mono font-bold text-foreground">{reassignUser.username}</span>
+              </p>
+
+              <div className="space-y-2">
+                <Label>IP atual</Label>
+                <Input value={profileByUserId[reassignUser.id].assigned_ip} readOnly className="font-mono" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="new-ip">Novo IP</Label>
+                <Input
+                  id="new-ip"
+                  value={newIp}
+                  onChange={(e) => setNewIp(e.target.value)}
+                  placeholder="10.8.0.x"
+                  className="font-mono"
+                />
+              </div>
+
+              <div className="flex items-start gap-2 rounded-md bg-warning/10 p-3 text-xs text-warning">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>
+                  Isto encerra a sessão VPN ativa do usuário. Ele precisará reconectar para usar o novo IP
+                  (o arquivo <span className="font-mono">.ovpn</span> continua o mesmo).
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-2 justify-end pt-4">
+              <Button variant="outline" onClick={() => { setReassignUser(null); setNewIp('') }}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => reassignIpMutation.mutate({ profileId: profileByUserId[reassignUser.id].id, ip: newIp.trim() })}
+                disabled={
+                  reassignIpMutation.isPending ||
+                  !newIp.trim() ||
+                  newIp.trim() === profileByUserId[reassignUser.id].assigned_ip
+                }
+              >
+                {reassignIpMutation.isPending ? 'Reatribuindo...' : 'Reatribuir IP'}
               </Button>
             </div>
           </div>
